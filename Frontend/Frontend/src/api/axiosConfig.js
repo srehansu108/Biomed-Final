@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Use import.meta.env instead of process.env in Vite
-const API_URL = 'http://localhost:8000/api/v1';
+const API_URL = 'https://biomed-final.onrender.com/api/v1';
 
 const axiosInstance = axios.create({
   baseURL: API_URL,
