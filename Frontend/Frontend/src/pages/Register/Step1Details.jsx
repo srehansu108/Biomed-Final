@@ -558,28 +558,40 @@ const Step1Details = ({ formData, setFormData, onNext, isLoading }) => {
 
         {/* Documents Submitted */}
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Documents Submitted for Age / ID Proof <span className="text-red-500">*</span>
-          </h3>
-          <select
-            multiple
-            name="idProofType"
-            value={formData.idProofType || []}
-            onChange={handleDocumentSelect}
-            className={`input-field h-32 ${errors.idProofType ? 'border-red-500' : ''}`}
-          >
-            <option value="Driving License">Driving License</option>
-            <option value="Voters ID Card">Voters ID Card</option>
-            <option value="NIN">NIN</option>
-            <option value="Organization ID-Card">Organization ID-Card</option>
-            <option value="School Leaving Certificate">School Leaving Certificate</option>
-            <option value="Passport">Passport</option>
-            <option value="Election Card">Election Card</option>
-            <option value="Others">Others</option>
-          </select>
-          <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
-          {errors.idProofType && <p className="text-red-500 text-sm mt-1">{errors.idProofType}</p>}
-        </div>
+  <h3 className="text-lg font-semibold text-gray-900 mb-4">
+    Documents Submitted for Age / ID Proof <span className="text-red-500">*</span>
+  </h3>
+  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+    {[
+      'Driving License', 'Voters ID Card', 'NIN',
+      'Organization ID-Card', 'School Leaving Certificate',
+      'Passport', 'Election Card', 'Others'
+    ].map(option => (
+      <label key={option} className="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer">
+        <input
+          type="checkbox"
+          name="idProofType"
+          value={option}
+          checked={formData.idProofType?.includes(option) || false}
+          onChange={(e) => {
+            const value = e.target.value;
+            setFormData(prev => {
+              const current = prev.idProofType || [];
+              if (current.includes(value)) {
+                return { ...prev, idProofType: current.filter(item => item !== value) };
+              } else {
+                return { ...prev, idProofType: [...current, value] };
+              }
+            });
+          }}
+          className="h-4 w-4 text-biomed-green"
+        />
+        <span className="text-sm">{option}</span>
+      </label>
+    ))}
+  </div>
+  {errors.idProofType && <p className="text-red-500 text-sm mt-1">{errors.idProofType}</p>}
+</div>
 
         {/* Upload Documents */}
         <div>
@@ -620,47 +632,63 @@ const Step1Details = ({ formData, setFormData, onNext, isLoading }) => {
         </div>
 
         {/* Education & Occupation */}
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Education & Occupation</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Education <span className="text-red-500">*</span>
-              </label>
-              <select
-                name="education"
-                value={formData.education || ''}
-                onChange={handleChange}
-                className={`input-field ${errors.education ? 'border-red-500' : ''}`}
-              >
-                <option value="">Select Education</option>
-                <option value="Primary">Primary</option>
-                <option value="JSS">JSS</option>
-                <option value="SSS">SSS</option>
-                <option value="Graduation">Graduation</option>
-                <option value="Illiterate">Illiterate</option>
-                <option value="University">University</option>
-                <option value="PG">PG</option>
-                <option value="Other">Other</option>
-              </select>
-              {errors.education && <p className="text-red-500 text-sm mt-1">{errors.education}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Occupation <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                name="occupation"
-                value={formData.occupation || ''}
-                onChange={handleChange}
-                className={`input-field ${errors.occupation ? 'border-red-500' : ''}`}
-                placeholder="Describe the volunteer's occupation"
-              />
-              {errors.occupation && <p className="text-red-500 text-sm mt-1">{errors.occupation}</p>}
-            </div>
-          </div>
-        </div>
+<div>
+  <h3 className="text-lg font-semibold text-gray-900 mb-4">Education & Occupation</h3>
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    
+    {/* Education - Left Column */}
+    <div>
+      <h4 className="text-md font-semibold text-gray-900 mb-3">
+        Education <span className="text-red-500">*</span>
+      </h4>
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          'Primary', 'JSS', 'SSS', 'Graduation',
+          'Illiterate', 'University', 'PG', 'Other'
+        ].map(option => (
+          <label key={option} className="flex items-center gap-2 p-2 border border-gray-200 rounded hover:bg-gray-50 cursor-pointer transition-colors">
+            <input
+              type="checkbox"
+              value={option}
+              checked={formData.education?.includes(option) || false}
+              onChange={(e) => {
+                const value = e.target.value;
+                setFormData(prev => {
+                  const current = prev.education || [];
+                  if (current.includes(value)) {
+                    return { ...prev, education: current.filter(item => item !== value) };
+                  } else {
+                    return { ...prev, education: [...current, value] };
+                  }
+                });
+              }}
+              className="h-4 w-4 text-biomed-green focus:ring-biomed-green"
+            />
+            <span className="text-sm">{option}</span>
+          </label>
+        ))}
+      </div>
+      {errors.education && <p className="text-red-500 text-sm mt-1">{errors.education}</p>}
+    </div>
+
+    {/* Occupation - Right Column */}
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Occupation <span className="text-red-500">*</span>
+      </label>
+      <input
+        type="text"
+        name="occupation"
+        value={formData.occupation || ''}
+        onChange={handleChange}
+        className={`input-field ${errors.occupation ? 'border-red-500' : ''}`}
+        placeholder="Describe the volunteer's occupation"
+      />
+      {errors.occupation && <p className="text-red-500 text-sm mt-1">{errors.occupation}</p>}
+    </div>
+  </div>
+</div>
+
 
         {/* Remarks */}
         <div>
