@@ -1,3 +1,4 @@
+// client/src/pages/Register/Register.jsx - UPDATED
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -10,29 +11,67 @@ const Register = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
   const [step, setStep] = useState(1);
+  
+  // Complete form data for volunteer registration
   const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    phone: '',
+    // Volunteer Identification
+    volunteerId: '',
+    initials: '',
+    profilePhoto: null,
+    
+    // Personal Information
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    dateOfBirth: '',
+    age: null,
     gender: '',
-    address: '',
+    maritalStatus: '',
+    
+    // Location Details
+    stateOfOrigin: '',
+    localGovernment: '',
+    city: '',
+    residentialAddress: '',
+    
+    // Contact Information
+    phone: '',
+    alternatePhone: '',
+    emergencyContactName: '',
+    emergencyContactPhone: '',
+    
+    // Languages
+    languages: {
+      english: { read: false, write: false, speak: false, understand: false },
+      hindi: { read: false, write: false, speak: false, understand: false },
+      german: { read: false, write: false, speak: false, understand: false },
+      french: { read: false, write: false, speak: false, understand: false },
+      other: { name: '', read: false, write: false, speak: false, understand: false }
+    },
+    languageNotes: '',
+    
+    // Dietary Habits
+    dietaryHabit: '',
+    
+    // Documents
+    idProofType: [],
+    documents: [],
+    
+    // Education & Occupation
+    education: '',
+    occupation: '',
+    remarks: '',
+    
+    // Biometrics (from step 2)
+    fingerprints: {},
+    profileImage: null
   });
-  const [fingerprints, setFingerprints] = useState({});
-  const [profileImage, setProfileImage] = useState(null);
+  
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleNextStep = () => {
-    // Validate required fields
-    const required = ['fullName', 'email', 'phone'];
-    const missing = required.filter(field => !formData[field]);
-    
-    if (missing.length > 0) {
-      setError(`Please fill in all required fields: ${missing.join(', ')}`);
-      return;
-    }
-    
-    setError('');
+    // Validation is handled inside Step1Details
     setStep(2);
   };
 
@@ -41,10 +80,11 @@ const Register = () => {
     setError('');
 
     try {
+      // Combine all form data
       const registrationData = {
         ...formData,
-        fingerprints: data.fingerprints || fingerprints,
-        profileImage: data.profileImage || profileImage,
+        fingerprints: data.fingerprints || formData.fingerprints,
+        profileImage: data.profileImage || formData.profileImage,
       };
 
       await register(registrationData);
@@ -58,14 +98,14 @@ const Register = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <Card className="max-w-4xl w-full">
+      <Card className="max-w-6xl w-full">
         {error && (
           <Alert type="error" message={error} className="mb-4" />
         )}
 
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-2xl font-bold text-gray-900">Create Account</h2>
+            <h2 className="text-2xl font-bold text-gray-900">Volunteer Registration</h2>
             <span className="text-sm text-gray-500">Step {step} of 2</span>
           </div>
           <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">

@@ -1,3 +1,4 @@
+// client/src/context/AuthContext.js - UPDATED
 import React, { createContext, useState, useEffect } from 'react';
 import axiosInstance from '../api/axiosConfig';
 import { ENDPOINTS } from '../api/endpoints';
@@ -12,7 +13,6 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check authentication on mount
   useEffect(() => {
     if (accessToken && user) {
       setIsAuthenticated(true);
@@ -20,10 +20,57 @@ export const AuthProvider = ({ children }) => {
     setIsLoading(false);
   }, [accessToken, user]);
 
-  // Register user
+  // Register volunteer
   const register = async (userData) => {
     try {
-      const response = await axiosInstance.post(ENDPOINTS.AUTH.REGISTER, userData);
+      // Convert files to FormData if needed
+      let dataToSend = { ...userData };
+      
+      // If there are files, use FormData
+      if (userData.profilePhoto || userData.documents?.length > 0) {
+        const formData = new FormData();
+        
+        // Add all non-file fields
+        Object.keys(userData).forEach(key => {
+          if (key !== 'profilePhoto' && key !== 'documents' && key !== 'fingerprints') {
+            if (typeof userData[key] === 'object') {
+              formData.append(key, JSON.stringify(userData[key]));
+            } else {
+              formData.append(key, userData[key]);
+            }
+          }
+        });
+        
+        // Add profile photo
+        if (userData.profilePhoto) {
+          formData.append('profilePhoto', userData.profilePhoto);
+        }
+        
+        // Add documents
+        if (userData.documents && userData.documents.length > 0) {
+          userData.documents.forEach(file => {
+            formData.append('documents', file);
+          });
+        }
+        
+        // Add fingerprints as JSON
+        if (userData.fingerprints) {
+          formData.append('fingerprints', JSON.stringify(userData.fingerprints));
+        }
+        
+        dataToSend = formData;
+      }
+
+      const response = await axiosInstance.post(
+        ENDPOINTS.AUTH.REGISTER_VOLUNTEER,
+        dataToSend,
+        {
+          headers: dataToSend instanceof FormData ? {
+            'Content-Type': 'multipart/form-data'
+          } : {}
+        }
+      );
+      
       const { user: userData_, tokens } = response.data.data;
 
       setUser(userData_);
@@ -38,7 +85,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Login user
+  // Login volunteer
   const login = async (email, fingerprintData) => {
     try {
       const response = await axiosInstance.post(ENDPOINTS.AUTH.LOGIN, {
@@ -59,7 +106,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Logout user
+  // Logout
   const logout = async () => {
     try {
       await axiosInstance.post(ENDPOINTS.AUTH.LOGOUT);
@@ -73,19 +120,6 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Update user profile
-  const updateProfile = async (userData) => {
-    try {
-      const response = await axiosInstance.put(ENDPOINTS.USERS.UPDATE_PROFILE, userData);
-      const updatedUser = response.data.data;
-      setUser(updatedUser);
-      return updatedUser;
-    } catch (error) {
-      const message = error.response?.data?.message || 'Profile update failed';
-      throw new Error(message);
-    }
-  };
-
   const value = {
     user,
     setUser,
@@ -94,8 +128,7 @@ export const AuthProvider = ({ children }) => {
     register,
     login,
     logout,
-    updateProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};  // <-- This closing curly brace was missing!
+};

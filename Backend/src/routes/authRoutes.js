@@ -1,10 +1,35 @@
+// routes/authRoutes.js - UPDATED WITH VOLUNTEER ROUTES
 const express = require('express');
 const router = express.Router();
 const AuthController = require('../controllers/authController');
 const { validate } = require('../middleware/validation');
 const { authValidator } = require('../validators/authValidator');
 const { authLimiter } = require('../middleware/rateLimiter');
+const { handleMultipleUpload } = require('../middleware/upload');
 
+// ============================================
+// VOLUNTEER REGISTRATION (with file uploads)
+// ============================================
+router.post(
+  '/register/volunteer',
+  authLimiter,
+  (req, res, next) => {
+    // Handle multiple files: profilePhoto (1) + documents (max 5)
+    const upload = handleMultipleUpload('documents', 5);
+    upload(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ message: err.message });
+      }
+      next();
+    });
+  },
+  validate(authValidator.registerVolunteer),
+  AuthController.registerVolunteer.bind(AuthController)
+);
+
+// ============================================
+// REGULAR REGISTRATION (backward compatibility)
+// ============================================
 router.post(
   '/register',
   authLimiter,
@@ -12,6 +37,9 @@ router.post(
   AuthController.register.bind(AuthController)
 );
 
+// ============================================
+// AUTHENTICATION
+// ============================================
 router.post(
   '/login',
   authLimiter,
@@ -29,6 +57,46 @@ router.post(
   authLimiter,
   validate(authValidator.refreshToken),
   AuthController.refreshToken.bind(AuthController)
+);
+
+// ============================================
+// VOLUNTEER MANAGEMENT (Admin only or self)
+// ============================================
+router.get(
+  '/volunteers',
+  AuthController.getAllVolunteers.bind(AuthController)
+);
+
+router.get(
+  '/volunteers/:id',
+  AuthController.getVolunteer.bind(AuthController)
+);
+
+router.put(
+  '/volunteers/:id',
+  (req, res, next) => {
+    const upload = handleMultipleUpload('documents', 5);
+    upload(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ message: err.message });
+      }
+      next();
+    });
+  },
+  AuthController.updateVolunteer.bind(AuthController)
+);
+
+router.delete(
+  '/volunteers/:id',
+  AuthController.deleteVolunteer.bind(AuthController)
+);
+
+// ============================================
+// FINGERPRINT VERIFICATION
+// ============================================
+router.post(
+  '/verify-fingerprint',
+  AuthController.verifyFingerprint.bind(AuthController)
 );
 
 // Test route
