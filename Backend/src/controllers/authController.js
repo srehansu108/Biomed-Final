@@ -1,4 +1,4 @@
-// controllers/authController.js - COMPLETE VOLUNTEER REGISTRATION
+// controllers/authController.js - COMPLETE VOLUNTEER REGISTRATION (FIXED)
 const Volunteer = require('../models/User');
 const Fingerprint = require('../models/Fingerprint');
 const Session = require('../models/Session');
@@ -34,14 +34,29 @@ class AuthController {
         profileImage // base64 string (optional)
       } = req.body;
 
+      // ============================================
+      // ✅ CORRECT FILE ACCESS FROM MIXED UPLOAD
+      // ============================================
+      const profilePhotoFile = req.files?.profilePhoto?.[0] || null;
+      const documentFiles = req.files?.documents || [];
+
       console.log('📝 Received volunteer data:', {
         firstName,
         lastName,
         phone,
         fingerprintsCount: fingerprints ? Object.keys(fingerprints).length : 0,
-        hasProfileImage: !!req.file || !!profileImage,
-        documentCount: req.files?.length || 0
+        hasProfilePhoto: !!profilePhotoFile,
+        documentCount: documentFiles.length
       });
+
+      console.log('📁 Files received:');
+      console.log(`  📸 Profile photo: ${profilePhotoFile ? profilePhotoFile.originalname : 'None'}`);
+      console.log(`  📄 Documents: ${documentFiles.length} file(s)`);
+      if (documentFiles.length > 0) {
+        documentFiles.forEach((file, i) => {
+          console.log(`    ${i + 1}. ${file.originalname} (${file.size} bytes)`);
+        });
+      }
 
       // ============================================
       // 1. VALIDATE REQUIRED FIELDS
@@ -72,7 +87,7 @@ class AuthController {
       const existingVolunteer = await Volunteer.findOne({ 
         $or: [
           { phone: sanitizedPhone },
-          { volunteerId: req.body.volunteerId } // if provided
+          { volunteerId: req.body.volunteerId }
         ]
       });
 
@@ -81,13 +96,13 @@ class AuthController {
       }
 
       // ============================================
-      // 4. PARSE LANGUAGES
+      // 4. PARSE LANGUAGES - FIXED
       // ============================================
       let parsedLanguages = {
         english: { read: false, write: false, speak: false, understand: false },
-        hindi: { read: false, write: false, speak: false, understand: false },
-        german: { read: false, write: false, speak: false, understand: false },
-        french: { read: false, write: false, speak: false, understand: false },
+        yoruba: { read: false, write: false, speak: false, understand: false },
+        igbo: { read: false, write: false, speak: false, understand: false },
+        hausa: { read: false, write: false, speak: false, understand: false },
         other: { name: '', read: false, write: false, speak: false, understand: false }
       };
 
@@ -116,7 +131,21 @@ class AuthController {
       }
 
       // ============================================
-      // 6. CREATE VOLUNTEER
+      // 6. PARSE EDUCATION - FIXED (handle array from frontend)
+      // ============================================
+      let parsedEducation = [];
+      if (education) {
+        try {
+          parsedEducation = typeof education === 'string'
+            ? JSON.parse(education)
+            : education;
+        } catch (e) {
+          parsedEducation = [education];
+        }
+      }
+
+      // ============================================
+      // 7. CREATE VOLUNTEER
       // ============================================
       const volunteer = new Volunteer({
         firstName: firstName.trim(),
@@ -137,7 +166,7 @@ class AuthController {
         languageNotes: languageNotes || '',
         dietaryHabit,
         idProofType: parsedIdProofType,
-        education,
+        education: parsedEducation,
         occupation: occupation.trim(),
         remarks: remarks || '',
         status: 'active',
@@ -146,14 +175,12 @@ class AuthController {
       });
 
       // ============================================
-      // 7. HANDLE PROFILE PHOTO UPLOAD
+      // 8. HANDLE PROFILE PHOTO - FIXED
       // ============================================
-      if (req.file) {
-        // File uploaded via multer
-        volunteer.profileImage = req.file.path;
-        console.log('📸 Profile photo uploaded:', req.file.path);
+      if (profilePhotoFile) {
+        volunteer.profileImage = profilePhotoFile.path;
+        console.log('📸 Profile photo saved:', profilePhotoFile.path);
       } else if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:image')) {
-        // Base64 image - save locally
         try {
           const base64Data = profileImage.replace(/^data:image\/\w+;base64,/, '');
           const imageBuffer = Buffer.from(base64Data, 'base64');
@@ -161,7 +188,6 @@ class AuthController {
           const filename = `profile-${uniqueSuffix}.jpg`;
           const filepath = path.join('uploads/profiles', filename);
           
-          // Ensure directory exists
           if (!fs.existsSync('uploads/profiles')) {
             fs.mkdirSync('uploads/profiles', { recursive: true });
           }
@@ -175,16 +201,19 @@ class AuthController {
       }
 
       // ============================================
-      // 8. HANDLE DOCUMENT UPLOADS
+      // 9. HANDLE MULTIPLE DOCUMENTS - FIXED
       // ============================================
-      if (req.files && req.files.length > 0) {
-        const documentPaths = req.files.map(file => file.path);
+      if (documentFiles && documentFiles.length > 0) {
+        const documentPaths = documentFiles.map(file => file.path);
         volunteer.documents = documentPaths;
-        console.log(`📄 ${documentPaths.length} documents uploaded`);
+        console.log(`📄 ${documentPaths.length} documents saved`);
+        documentPaths.forEach((path, i) => {
+          console.log(`  ${i + 1}. ${path}`);
+        });
       }
 
       // ============================================
-      // 9. SAVE VOLUNTEER
+      // 10. SAVE VOLUNTEER
       // ============================================
       await volunteer.save();
       console.log('✅ Volunteer created with ID:', volunteer._id);
@@ -192,45 +221,31 @@ class AuthController {
       console.log('🔤 Initials:', volunteer.initials);
 
       // ============================================
-      // 10. SAVE FINGERPRINTS
+      // 11. SAVE FINGERPRINTS
       // ============================================
       console.log('🔐 Saving fingerprints...');
       const savedFingerprints = [];
       
       for (const [fingerType, fingerData] of Object.entries(fingerprints)) {
-        // Validate finger type
         if (!Object.values(FINGER_TYPES).includes(fingerType)) {
-          // Rollback - delete volunteer if fingerprint invalid
           await Volunteer.findByIdAndDelete(volunteer._id);
           return sendError(res, 400, `Invalid finger type: ${fingerType}`);
         }
 
-        // Validate fingerprint data
         if (!fingerData || !fingerData.data || typeof fingerData.data !== 'string') {
           await Volunteer.findByIdAndDelete(volunteer._id);
           return sendError(res, 400, `Invalid ${fingerType} template data`);
         }
 
-        // Decompress if needed
         let templateData = fingerData.data;
         try {
           const decompressed = Buffer.from(templateData, 'base64').toString();
           templateData = decompressed;
-        } catch (e) {
-          // Not compressed, use as is
-        }
+        } catch (e) {}
 
-        // Encrypt fingerprint
-        const encrypted = EncryptionService.encrypt(
-          templateData,
-          volunteer._id.toString()
-        );
+        const encrypted = EncryptionService.encrypt(templateData, volunteer._id.toString());
+        const qualityScore = fingerData.quality || 70;
 
-        // Calculate quality score
-        const qualityScore = fingerData.quality || 
-          BiometricService.calculateQualityMetrics({ template: templateData }).overallQuality || 70;
-
-        // Create fingerprint record
         const fingerprint = new Fingerprint({
           userId: volunteer._id,
           fingerType: fingerType,
@@ -252,11 +267,11 @@ class AuthController {
 
         await fingerprint.save();
         savedFingerprints.push(fingerprint);
-        console.log(`  ✅ ${fingerType} saved with ID: ${fingerprint._id}`);
+        console.log(`  ✅ ${fingerType} saved`);
       }
 
       // ============================================
-      // 11. LOG AUDIT
+      // 12. LOG AUDIT
       // ============================================
       await AuditService.log({
         userId: volunteer._id,
@@ -268,16 +283,16 @@ class AuthController {
           lastName,
           phone: sanitizedPhone,
           volunteerId: volunteer.volunteerId,
-          fingerprints: Object.keys(fingerprints).length 
+          fingerprints: Object.keys(fingerprints).length,
+          documents: documentFiles.length
         }
       });
 
       // ============================================
-      // 12. GENERATE TOKENS
+      // 13. GENERATE TOKENS
       // ============================================
       const tokens = JWTService.generateTokenPair(volunteer);
 
-      // Create session
       const session = new Session({
         userId: volunteer._id,
         accessToken: tokens.accessToken,
@@ -304,12 +319,14 @@ class AuthController {
       console.error('❌ Registration error:', error);
       console.error('❌ Stack trace:', error.stack);
       
-      // Cleanup uploaded files if error occurs
-      if (req.file) {
-        deleteProfileImage(req.file.path);
-      }
+      // ✅ Cleanup uploaded files if error occurs
       if (req.files) {
-        req.files.forEach(file => deleteProfileImage(file.path));
+        if (req.files.profilePhoto) {
+          req.files.profilePhoto.forEach(file => deleteProfileImage(file.path));
+        }
+        if (req.files.documents) {
+          req.files.documents.forEach(file => deleteProfileImage(file.path));
+        }
       }
       
       sendError(res, 500, error.message || 'Registration failed');
@@ -336,7 +353,6 @@ class AuthController {
         hasFingerprints: !!fingerprints 
       });
 
-      // Validate required fields
       if (!fullName) return sendError(res, 400, 'Full name is required');
       if (!email) return sendError(res, 400, 'Email is required');
       if (!phone) return sendError(res, 400, 'Phone is required');
@@ -345,11 +361,9 @@ class AuthController {
         return sendError(res, 400, 'At least one fingerprint is required');
       }
 
-      // Sanitize input
       const sanitizedEmail = email.toLowerCase().trim();
       const sanitizedPhone = phone.replace(/\D/g, '');
 
-      // Check if user exists
       const existingUser = await Volunteer.findOne({
         $or: [
           { email: sanitizedEmail },
@@ -361,7 +375,6 @@ class AuthController {
         return sendError(res, 409, 'User already exists with this email or phone');
       }
 
-      // Create user
       const user = new Volunteer({
         fullName: fullName.trim(),
         email: sanitizedEmail,
@@ -377,45 +390,31 @@ class AuthController {
       await user.save();
       console.log('✅ User created with ID:', user._id);
 
-      // Save fingerprints
       console.log('🔐 Saving fingerprints...');
       const savedFingerprints = [];
       
       for (const [fingerType, fingerData] of Object.entries(fingerprints)) {
         console.log(`  📌 Processing ${fingerType}...`);
         
-        // Validate finger type
         if (!Object.values(FINGER_TYPES).includes(fingerType)) {
           await Volunteer.findByIdAndDelete(user._id);
           return sendError(res, 400, `Invalid finger type: ${fingerType}`);
         }
 
-        // Validate fingerprint data
         if (!fingerData || !fingerData.data || typeof fingerData.data !== 'string') {
           await Volunteer.findByIdAndDelete(user._id);
           return sendError(res, 400, `Invalid ${fingerType} template data`);
         }
 
-        // Decompress if needed
         let templateData = fingerData.data;
         try {
           const decompressed = Buffer.from(templateData, 'base64').toString();
           templateData = decompressed;
-        } catch (e) {
-          // Not compressed, use as is
-        }
+        } catch (e) {}
 
-        // Encrypt fingerprint
-        const encrypted = EncryptionService.encrypt(
-          templateData,
-          user._id.toString()
-        );
+        const encrypted = EncryptionService.encrypt(templateData, user._id.toString());
+        const qualityScore = fingerData.quality || 70;
 
-        // Quality score
-        const qualityScore = fingerData.quality || 
-          BiometricService.calculateQualityMetrics({ template: templateData }).overallQuality || 70;
-
-        // Create fingerprint record
         const fingerprint = new Fingerprint({
           userId: user._id,
           fingerType: fingerType,
@@ -437,10 +436,9 @@ class AuthController {
 
         await fingerprint.save();
         savedFingerprints.push(fingerprint);
-        console.log(`  ✅ ${fingerType} saved with ID: ${fingerprint._id}`);
+        console.log(`  ✅ ${fingerType} saved`);
       }
 
-      // Log audit
       await AuditService.log({
         userId: user._id,
         action: 'register',
@@ -453,10 +451,8 @@ class AuthController {
         }
       });
 
-      // Generate tokens
       const tokens = JWTService.generateTokenPair(user);
 
-      // Create session
       const session = new Session({
         userId: user._id,
         accessToken: tokens.accessToken,
@@ -514,7 +510,6 @@ class AuthController {
       }
       console.log('✅ User found:', user._id);
 
-      // Check if account is locked
       if (user.isLocked) {
         return sendError(res, 423, 'Account locked. Please try again after 30 minutes.');
       }
@@ -523,7 +518,6 @@ class AuthController {
         return sendError(res, 403, 'Account suspended');
       }
 
-      // Find primary fingerprint
       const fingerprint = await Fingerprint.findOne({
         userId: user._id,
         isPrimary: true,
@@ -540,7 +534,6 @@ class AuthController {
         return sendError(res, 400, 'No registered fingerprint found');
       }
 
-      // Verify fingerprint
       const verification = await BiometricService.verifyFingerprint(
         fingerprintData,
         fingerprint,
@@ -571,7 +564,6 @@ class AuthController {
         return sendError(res, 401, 'Fingerprint does not match');
       }
 
-      // Successful login
       await user.resetLoginAttempts();
       await user.updateLastLogin();
       await fingerprint.incrementVerification('success', verification.matchScore);
@@ -584,10 +576,8 @@ class AuthController {
         details: { matchScore: verification.matchScore }
       });
 
-      // Generate tokens
       const tokens = JWTService.generateTokenPair(user);
 
-      // Create session
       const session = new Session({
         userId: user._id,
         accessToken: tokens.accessToken,
@@ -623,7 +613,6 @@ class AuthController {
       const { refreshToken } = req.body;
       
       if (refreshToken) {
-        // Invalidate session
         await Session.findOneAndUpdate(
           { refreshToken },
           { 
@@ -659,7 +648,6 @@ class AuthController {
         return sendError(res, 400, 'Refresh token required');
       }
 
-      // Check if session exists
       const session = await Session.findOne({ 
         refreshToken, 
         isActive: true 
@@ -669,7 +657,6 @@ class AuthController {
         return sendError(res, 401, 'Invalid or expired refresh token');
       }
 
-      // Verify token
       const decoded = JWTService.verifyRefreshToken(refreshToken);
       const user = await Volunteer.findById(decoded.userId);
       
@@ -677,15 +664,12 @@ class AuthController {
         return sendError(res, 401, 'User not found');
       }
 
-      // Check if user is active
       if (user.status === 'suspended') {
         return sendError(res, 403, 'Account suspended');
       }
 
-      // Rotate tokens
       const newTokens = JWTService.refreshTokens(refreshToken);
 
-      // Update session
       session.accessToken = newTokens.accessToken;
       session.refreshToken = newTokens.refreshToken;
       session.lastActivity = new Date();
@@ -724,7 +708,6 @@ class AuthController {
         return sendError(res, 404, 'User not found');
       }
 
-      // Find fingerprint
       const query = { userId: user._id, isActive: true };
       if (fingerType) {
         query.fingerType = fingerType;
@@ -735,7 +718,6 @@ class AuthController {
         return sendError(res, 404, 'Fingerprint not found');
       }
 
-      // Verify
       const verification = await BiometricService.verifyFingerprint(
         fingerprintData,
         fingerprint,
@@ -746,7 +728,6 @@ class AuthController {
         return sendError(res, 400, verification.error || 'Verification failed');
       }
 
-      // Update verification count
       await fingerprint.incrementVerification(
         verification.isMatch ? 'success' : 'failure',
         verification.matchScore
@@ -777,7 +758,6 @@ class AuthController {
         return sendError(res, 404, 'Volunteer not found');
       }
 
-      // Check if user is admin or the volunteer themselves
       if (req.user.role !== 'admin' && req.user._id.toString() !== volunteer._id.toString()) {
         return sendError(res, 403, 'Unauthorized to view this profile');
       }
@@ -797,18 +777,15 @@ class AuthController {
       const { id } = req.params;
       const updates = req.body;
 
-      // Find volunteer
       const volunteer = await Volunteer.findById(id);
       if (!volunteer) {
         return sendError(res, 404, 'Volunteer not found');
       }
 
-      // Check permissions
       if (req.user.role !== 'admin' && req.user._id.toString() !== volunteer._id.toString()) {
         return sendError(res, 403, 'Unauthorized to update this profile');
       }
 
-      // Allowed fields to update
       const allowedFields = [
         'firstName', 'middleName', 'lastName', 'gender', 'maritalStatus',
         'stateOfOrigin', 'localGovernment', 'city', 'residentialAddress',
@@ -816,7 +793,6 @@ class AuthController {
         'languages', 'languageNotes', 'dietaryHabit', 'education', 'occupation', 'remarks'
       ];
 
-      // Filter updates
       const filteredUpdates = {};
       for (const field of allowedFields) {
         if (updates[field] !== undefined) {
@@ -824,7 +800,6 @@ class AuthController {
         }
       }
 
-      // Handle phone update with uniqueness check
       if (filteredUpdates.phone) {
         const sanitizedPhone = filteredUpdates.phone.replace(/\D/g, '');
         const existing = await Volunteer.findOne({
@@ -837,20 +812,28 @@ class AuthController {
         filteredUpdates.phone = sanitizedPhone;
       }
 
-      // Handle profile image update
-      if (req.file) {
-        // Delete old image
+      // Handle profile image update from files
+      const profilePhotoFile = req.files?.profilePhoto?.[0] || null;
+      if (profilePhotoFile) {
         if (volunteer.profileImage) {
           deleteProfileImage(volunteer.profileImage);
         }
-        filteredUpdates.profileImage = req.file.path;
+        filteredUpdates.profileImage = profilePhotoFile.path;
       }
 
-      // Apply updates
+      // Handle documents update
+      const documentFiles = req.files?.documents || [];
+      if (documentFiles.length > 0) {
+        // Delete old documents
+        if (volunteer.documents && volunteer.documents.length > 0) {
+          volunteer.documents.forEach(doc => deleteProfileImage(doc));
+        }
+        filteredUpdates.documents = documentFiles.map(file => file.path);
+      }
+
       Object.assign(volunteer, filteredUpdates);
       await volunteer.save();
 
-      // Log audit
       await AuditService.log({
         userId: req.userId,
         action: 'update_volunteer',
@@ -878,31 +861,22 @@ class AuthController {
         return sendError(res, 404, 'Volunteer not found');
       }
 
-      // Only admin can delete
       if (req.user.role !== 'admin') {
         return sendError(res, 403, 'Only admins can delete volunteers');
       }
 
-      // Delete profile image
       if (volunteer.profileImage) {
         deleteProfileImage(volunteer.profileImage);
       }
 
-      // Delete documents
       if (volunteer.documents && volunteer.documents.length > 0) {
         volunteer.documents.forEach(doc => deleteProfileImage(doc));
       }
 
-      // Delete fingerprints
       await Fingerprint.deleteMany({ userId: volunteer._id });
-
-      // Delete sessions
       await Session.deleteMany({ userId: volunteer._id });
-
-      // Delete volunteer
       await volunteer.deleteOne();
 
-      // Log audit
       await AuditService.log({
         userId: req.userId,
         action: 'delete_volunteer',

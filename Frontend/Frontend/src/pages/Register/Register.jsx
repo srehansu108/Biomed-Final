@@ -43,9 +43,8 @@ const Register = () => {
     // Languages
     languages: {
       english: { read: false, write: false, speak: false, understand: false },
-      hindi: { read: false, write: false, speak: false, understand: false },
-      german: { read: false, write: false, speak: false, understand: false },
-      french: { read: false, write: false, speak: false, understand: false },
+      yoruba: { read: false, write: false, speak: false, understand: false },
+      'Igbo Hausa': { read: false, write: false, speak: false, understand: false },
       other: { name: '', read: false, write: false, speak: false, understand: false }
     },
     languageNotes: '',

@@ -1,11 +1,11 @@
-// routes/authRoutes.js - UPDATED WITH VOLUNTEER ROUTES
+// routes/authRoutes.js - UPDATED WITH VOLUNTEER ROUTES (FIXED)
 const express = require('express');
 const router = express.Router();
 const AuthController = require('../controllers/authController');
 const { validate } = require('../middleware/validation');
 const { authValidator } = require('../validators/authValidator');
 const { authLimiter } = require('../middleware/rateLimiter');
-const { handleMultipleUpload } = require('../middleware/upload');
+const { handleMixedUpload } = require('../middleware/upload'); // ✅ IMPORT THIS
 
 // ============================================
 // VOLUNTEER REGISTRATION (with file uploads)
@@ -13,16 +13,7 @@ const { handleMultipleUpload } = require('../middleware/upload');
 router.post(
   '/register/volunteer',
   authLimiter,
-  (req, res, next) => {
-    // Handle multiple files: profilePhoto (1) + documents (max 5)
-    const upload = handleMultipleUpload('documents', 5);
-    upload(req, res, (err) => {
-      if (err) {
-        return res.status(400).json({ message: err.message });
-      }
-      next();
-    });
-  },
+  handleMixedUpload, // ✅ Handles both profilePhoto AND documents
   validate(authValidator.registerVolunteer),
   AuthController.registerVolunteer.bind(AuthController)
 );
@@ -60,7 +51,7 @@ router.post(
 );
 
 // ============================================
-// VOLUNTEER MANAGEMENT (Admin only or self)
+// VOLUNTEER MANAGEMENT
 // ============================================
 router.get(
   '/volunteers',
@@ -74,15 +65,7 @@ router.get(
 
 router.put(
   '/volunteers/:id',
-  (req, res, next) => {
-    const upload = handleMultipleUpload('documents', 5);
-    upload(req, res, (err) => {
-      if (err) {
-        return res.status(400).json({ message: err.message });
-      }
-      next();
-    });
-  },
+  handleMixedUpload, // ✅ Handles both profilePhoto AND documents for update
   AuthController.updateVolunteer.bind(AuthController)
 );
 

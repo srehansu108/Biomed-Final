@@ -133,19 +133,13 @@ const VolunteerSchema = new mongoose.Schema({
       speak: { type: Boolean, default: false },
       understand: { type: Boolean, default: false }
     },
-    hindi: {
+    yoruba: {
       read: { type: Boolean, default: false },
       write: { type: Boolean, default: false },
       speak: { type: Boolean, default: false },
       understand: { type: Boolean, default: false }
     },
-    german: {
-      read: { type: Boolean, default: false },
-      write: { type: Boolean, default: false },
-      speak: { type: Boolean, default: false },
-      understand: { type: Boolean, default: false }
-    },
-    french: {
+    Igbo_Hausa: {
       read: { type: Boolean, default: false },
       write: { type: Boolean, default: false },
       speak: { type: Boolean, default: false },
