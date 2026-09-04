@@ -24,9 +24,9 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
     captureProgress,
     fingerprintData,
     error: wsError,
-    scannerStatus,      // ✅ GET SCANNER STATUS
+    scannerStatus, // ✅ Get scanner status
     startCapture,
-    stopCapture
+    stopCapture,
   } = useFingerprintWebSocket();
 
   const [currentFingerIndex, setCurrentFingerIndex] = useState(0);
@@ -38,7 +38,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
   const currentFinger = FINGER_ORDER[currentFingerIndex];
   const progress = (currentFingerIndex / FINGER_ORDER.length) * 100;
 
-  // ✅ Helper to get scanner display info
+  // ✅ Get scanner status display
   const getScannerDisplay = () => {
     if (!isConnected) {
       return { text: '🔴 Scanner Disconnected', color: 'text-red-500', bg: 'bg-red-50' };
@@ -55,21 +55,21 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
 
   const scannerDisplay = getScannerDisplay();
 
-  // ... existing effects and handlers (unchanged) ...
+  // ... rest of your existing effects and handlers ...
 
-  // 🔥 Handle WebSocket messages for this component
+  // Effects
   useEffect(() => {
     if (fingerprintData && fingerprintData.fingerType === currentFinger) {
       const updatedFingers = {
         ...capturedFingers,
-        [currentFinger]: fingerprintData
+        [currentFinger]: fingerprintData,
       };
       setCapturedFingers(updatedFingers);
       setCurrentFingerData(fingerprintData);
 
       if (currentFingerIndex < FINGER_ORDER.length - 1) {
         setTimeout(() => {
-          setCurrentFingerIndex(prev => prev + 1);
+          setCurrentFingerIndex((prev) => prev + 1);
           setCurrentFingerData(null);
         }, 1500);
       } else {
@@ -93,11 +93,12 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
         progress: progress,
         capturedFingers: capturedFingers,
         isCapturing,
-        captureProgress
+        captureProgress,
       });
     }
   }, [capturedFingers, currentFingerIndex, progress, isCapturing, captureProgress]);
 
+  // Handlers
   const handleStartCapture = () => {
     setLocalError('');
     startCapture(currentFinger);
@@ -111,7 +112,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
 
   return (
     <div className={`space-y-6 ${className}`}>
-      {/* ✅ SCANNER STATUS DISPLAY */}
+      {/* ✅ SCANNER STATUS DISPLAY - Top Section */}
       <div className={`p-3 rounded-lg border ${scannerDisplay.bg} border-gray-200`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -152,12 +153,15 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
           showHeatmap={true}
           onFingerDetected={() => console.log('Finger detected!')}
         />
-        
-        {/* ✅ Scanner status overlay - now shows actual status */}
+
+        {/* ✅ FIXED Scanner status overlay - bottom of visualizer */}
         <div className="absolute bottom-4 left-4 right-4">
           <div className="flex items-center justify-between">
             <span className={`text-xs ${isConnected ? 'text-white/80' : 'text-red-400'}`}>
-              {isConnected ? scannerDisplay.text : '🔴 Scanner Disconnected'}
+              {!isConnected ? '🔴 Scanner Disconnected' : 
+               scannerStatus.deviceConnected ? '🟢 Scanner Online' : 
+               scannerStatus.isSimulated ? '🟡 Simulated Mode' : 
+               '🔴 Scanner Offline'}
             </span>
             {isCapturing && (
               <span className="text-xs text-blue-300 animate-pulse">
@@ -168,9 +172,6 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
         </div>
       </div>
 
-      {/* ... rest of the component (progress bar, finger status, etc.) - unchanged ... */}
-      {/* ... but ensure it uses allFingersCaptured and currentFingerData ... */}
-      
       {/* Progress */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -191,7 +192,9 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
       <div className="p-4 bg-white rounded-lg border border-gray-200">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-lg font-semibold text-gray-900">
-            {isComplete ? '✅ All Fingers Captured!' : `Step ${currentFingerIndex + 1}: ${FINGER_NAMES[currentFinger]}`}
+            {isComplete
+              ? '✅ All Fingers Captured!'
+              : `Step ${currentFingerIndex + 1}: ${FINGER_NAMES[currentFinger]}`}
           </h4>
         </div>
 
@@ -211,14 +214,17 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                   </div>
                 </div>
                 <QualityIndicator quality={currentFingerData.quality} />
-                <Button variant="outline" onClick={() => {
-                  setCurrentFingerData(null);
-                  setCapturedFingers(prev => {
-                    const updated = { ...prev };
-                    delete updated[currentFinger];
-                    return updated;
-                  });
-                }}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setCurrentFingerData(null);
+                    setCapturedFingers((prev) => {
+                      const updated = { ...prev };
+                      delete updated[currentFinger];
+                      return updated;
+                    });
+                  }}
+                >
                   Rescan
                 </Button>
               </div>
@@ -231,31 +237,24 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                   className="w-full"
                   size="lg"
                 >
-                  {isCapturing 
-                    ? `Scanning ${FINGER_NAMES[currentFinger]}...` 
-                    : !isConnected 
+                  {isCapturing
+                    ? `Scanning ${FINGER_NAMES[currentFinger]}...`
+                    : !isConnected
                     ? '🔴 Scanner Not Connected'
                     : !isAuthenticated
                     ? '🔐 Please Login First'
-                    : `Capture ${FINGER_NAMES[currentFinger]}`
-                  }
+                    : `Capture ${FINGER_NAMES[currentFinger]}`}
                 </Button>
-                
+
                 {isCapturing && (
-                  <Button
-                    variant="secondary"
-                    onClick={handleStopCapture}
-                    className="w-full"
-                  >
+                  <Button variant="secondary" onClick={handleStopCapture} className="w-full">
                     Stop Capture
                   </Button>
                 )}
               </div>
             )}
 
-            {localError && (
-              <Alert type="error" message={localError} className="mt-3" />
-            )}
+            {localError && <Alert type="error" message={localError} className="mt-3" />}
           </>
         )}
 
