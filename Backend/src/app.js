@@ -58,6 +58,18 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/fingerprints', fingerprintRoutes);
 
+// ✅ WebSocket route info
+app.get('/ws/info', (req, res) => {
+  res.json({
+    websocket: {
+      url: `ws://localhost:${process.env.PORT || 8000}/ws/fingerprint`,
+      path: '/ws/fingerprint',
+      status: 'active',
+      version: '1.0.0'
+    }
+  });
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

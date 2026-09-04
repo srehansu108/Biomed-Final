@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
 const url = require('url');
+const BiometricService = require('../services/biometricService');
 
 class WebSocketManager {
   constructor(server) {
@@ -37,7 +38,9 @@ class WebSocketManager {
           clientId,
           status: 'ready',
           timestamp: Date.now(),
-          capabilities: ['capture', 'verify', 'live_preview']
+          capabilities: ['capture', 'verify', 'live_preview'],
+          serverTime: new Date().toISOString(),
+          scanner: BiometricService.getScannerStatus()
         }
       });
 
