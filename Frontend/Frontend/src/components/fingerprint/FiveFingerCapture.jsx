@@ -1,4 +1,4 @@
-// client/src/components/fingerprint/FiveFingerCapture.jsx (UPDATED)
+// client/src/components/fingerprint/FiveFingerCapture.jsx
 import React, { useState, useEffect } from 'react';
 import { FingerprintVisualizer } from './FingerprintVisualizer';
 import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
@@ -17,14 +17,14 @@ const FINGER_NAMES = {
 const FINGER_ORDER = ['right_thumb', 'right_index', 'right_middle', 'right_ring', 'right_little'];
 
 export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) => {
-  // 🔥 Use WebSocket for real-time capture
   const {
     isConnected,
+    isAuthenticated,
     isCapturing,
     captureProgress,
     fingerprintData,
-    liveData,
     error: wsError,
+    scannerStatus,      // ✅ GET SCANNER STATUS
     startCapture,
     stopCapture
   } = useFingerprintWebSocket();
@@ -38,10 +38,28 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
   const currentFinger = FINGER_ORDER[currentFingerIndex];
   const progress = (currentFingerIndex / FINGER_ORDER.length) * 100;
 
+  // ✅ Helper to get scanner display info
+  const getScannerDisplay = () => {
+    if (!isConnected) {
+      return { text: '🔴 Scanner Disconnected', color: 'text-red-500', bg: 'bg-red-50' };
+    }
+    if (scannerStatus.deviceConnected) {
+      const model = scannerStatus.deviceInfo?.Model || 'Scanner';
+      return { text: `🟢 ${model} (Online)`, color: 'text-green-500', bg: 'bg-green-50' };
+    }
+    if (scannerStatus.isSimulated) {
+      return { text: '🟡 Simulated Mode (No Device)', color: 'text-yellow-500', bg: 'bg-yellow-50' };
+    }
+    return { text: '🔴 Scanner Offline', color: 'text-red-500', bg: 'bg-red-50' };
+  };
+
+  const scannerDisplay = getScannerDisplay();
+
+  // ... existing effects and handlers (unchanged) ...
+
   // 🔥 Handle WebSocket messages for this component
   useEffect(() => {
     if (fingerprintData && fingerprintData.fingerType === currentFinger) {
-      // Capture complete for current finger
       const updatedFingers = {
         ...capturedFingers,
         [currentFinger]: fingerprintData
@@ -49,7 +67,6 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
       setCapturedFingers(updatedFingers);
       setCurrentFingerData(fingerprintData);
 
-      // Move to next finger
       if (currentFingerIndex < FINGER_ORDER.length - 1) {
         setTimeout(() => {
           setCurrentFingerIndex(prev => prev + 1);
@@ -62,13 +79,11 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
         }, 500);
       }
     }
-
     if (wsError) {
       setLocalError(wsError);
     }
   }, [fingerprintData, wsError]);
 
-  // 🔥 Send progress updates to parent
   useEffect(() => {
     if (onProgress) {
       onProgress({
@@ -96,6 +111,33 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
 
   return (
     <div className={`space-y-6 ${className}`}>
+      {/* ✅ SCANNER STATUS DISPLAY */}
+      <div className={`p-3 rounded-lg border ${scannerDisplay.bg} border-gray-200`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">{scannerDisplay.text.split(' ')[0]}</span>
+            <span className={`font-medium ${scannerDisplay.color}`}>
+              {scannerDisplay.text}
+            </span>
+          </div>
+          {scannerStatus.deviceInfo && (
+            <span className="text-xs text-gray-500">
+              {scannerStatus.deviceInfo.Manufacturer} {scannerStatus.deviceInfo.Model}
+            </span>
+          )}
+        </div>
+        {scannerStatus.isSimulated && !scannerStatus.deviceConnected && (
+          <p className="text-xs text-gray-500 mt-1">
+            💡 No physical scanner detected. Using simulated mode for development.
+          </p>
+        )}
+        {scannerStatus.deviceConnected && (
+          <p className="text-xs text-green-600 mt-1">
+            ✅ Fingerprint scanner is ready. Place your finger on the device.
+          </p>
+        )}
+      </div>
+
       {/* 🔥 LIVE FINGERPRINT VISUALIZER */}
       <div className="relative">
         <FingerprintVisualizer
@@ -111,11 +153,11 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
           onFingerDetected={() => console.log('Finger detected!')}
         />
         
-        {/* Scanner status overlay */}
+        {/* ✅ Scanner status overlay - now shows actual status */}
         <div className="absolute bottom-4 left-4 right-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">
-              {isConnected ? '🟢 Scanner Online' : '🔴 Scanner Offline'}
+            <span className={`text-xs ${isConnected ? 'text-white/80' : 'text-red-400'}`}>
+              {isConnected ? scannerDisplay.text : '🔴 Scanner Disconnected'}
             </span>
             {isCapturing && (
               <span className="text-xs text-blue-300 animate-pulse">
@@ -126,6 +168,9 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
         </div>
       </div>
 
+      {/* ... rest of the component (progress bar, finger status, etc.) - unchanged ... */}
+      {/* ... but ensure it uses allFingersCaptured and currentFingerData ... */}
+      
       {/* Progress */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -182,7 +227,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                 <Button
                   onClick={handleStartCapture}
                   isLoading={isCapturing}
-                  disabled={isCapturing || !isConnected}
+                  disabled={isCapturing || !isConnected || !isAuthenticated}
                   className="w-full"
                   size="lg"
                 >
@@ -190,6 +235,8 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                     ? `Scanning ${FINGER_NAMES[currentFinger]}...` 
                     : !isConnected 
                     ? '🔴 Scanner Not Connected'
+                    : !isAuthenticated
+                    ? '🔐 Please Login First'
                     : `Capture ${FINGER_NAMES[currentFinger]}`
                   }
                 </Button>
