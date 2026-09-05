@@ -1,3 +1,4 @@
+// src/config/websocket.js
 const WebSocket = require('ws');
 const url = require('url');
 const BiometricService = require('../services/biometricService');
@@ -23,15 +24,16 @@ class WebSocketManager {
       this.clients.set(clientId, {
         ws,
         userId: params.userId || null,
-        isAuthenticated: !!params.token,
+        isAuthenticated: false, // Start as false
         lastActivity: Date.now(),
         currentCapture: null,
         fingerType: null,
+        token: params.token || null, // Store token from URL
       });
 
       console.log(`🟢 WebSocket client connected: ${clientId}`);
       
-      // Send connection confirmation
+      // Send connection confirmation with scanner status
       this.sendToClient(clientId, {
         type: 'connected',
         payload: {
@@ -43,6 +45,12 @@ class WebSocketManager {
           scanner: BiometricService.getScannerStatus()
         }
       });
+
+      // ✅ Auto-authenticate if token was provided in URL
+      if (params.token) {
+        console.log(`🔐 Auto-authenticating client ${clientId} with token from URL`);
+        this.handleAuthenticate(clientId, { token: params.token });
+      }
 
       // Setup message handler
       ws.on('message', async (message) => {
@@ -126,35 +134,52 @@ class WebSocketManager {
     client.lastActivity = Date.now();
   }
 
+  // ✅ FIXED: Better authentication handling
   async handleAuthenticate(clientId, payload) {
     const client = this.clients.get(clientId);
     if (!client) return;
 
-    const { token, userId } = payload;
+    const { token } = payload;
     
+    if (!token) {
+      this.sendToClient(clientId, {
+        type: 'authenticated',
+        payload: {
+          status: 'failed',
+          error: 'Token is required'
+        }
+      });
+      return;
+    }
+
     try {
       // Verify token
       const JWTService = require('../services/jwtService');
       const decoded = JWTService.verifyToken(token);
       
-      if (decoded.userId !== userId) {
-        throw new Error('Token does not match user');
+      // Get userId from decoded token (could be 'userId' or 'id' or 'sub')
+      const userId = decoded.userId || decoded.id || decoded.sub;
+      
+      if (!userId) {
+        throw new Error('Invalid token: no user ID found');
       }
 
       client.userId = userId;
       client.isAuthenticated = true;
+      client.token = token;
 
       this.sendToClient(clientId, {
         type: 'authenticated',
         payload: {
           status: 'success',
-          userId,
+          userId: userId,
           timestamp: Date.now()
         }
       });
 
       console.log(`✅ Client ${clientId} authenticated as user ${userId}`);
     } catch (error) {
+      console.error(`❌ Authentication failed for client ${clientId}:`, error.message);
       this.sendToClient(clientId, {
         type: 'authenticated',
         payload: {
@@ -165,10 +190,17 @@ class WebSocketManager {
     }
   }
 
+  // ✅ FIXED: Allow unauthenticated capture for registration
   async handleStartCapture(clientId, payload) {
     const client = this.clients.get(clientId);
-    if (!client || !client.isAuthenticated) {
-      throw new Error('Unauthenticated client');
+    if (!client) {
+      throw new Error('Client not found');
+    }
+
+    // ✅ Allow capture even if not authenticated (for registration)
+    // Just log the authentication status
+    if (!client.isAuthenticated) {
+      console.log(`⚠️ Client ${clientId} is not authenticated, but allowing capture (registration mode)`);
     }
 
     const { fingerType = 'right_thumb', timeout = 30000 } = payload;
@@ -263,26 +295,11 @@ class WebSocketManager {
     }
   }
 
-  async handleStopCapture(clientId) {
-    const client = this.clients.get(clientId);
-    if (!client) return;
-
-    if (client.currentCapture) {
-      client.currentCapture.isActive = false;
-      client.currentCapture = null;
-      client.fingerType = null;
-
-      this.sendToClient(clientId, {
-        type: 'capture_stopped',
-        payload: { timestamp: Date.now() }
-      });
-    }
-  }
-
+  // ✅ FIXED: Verification still requires authentication
   async handleStartVerification(clientId, payload) {
     const client = this.clients.get(clientId);
     if (!client || !client.isAuthenticated) {
-      throw new Error('Unauthenticated client');
+      throw new Error('Authentication required for verification');
     }
 
     const { userId, fingerType = 'right_thumb', timeout = 30000 } = payload;
@@ -334,6 +351,22 @@ class WebSocketManager {
     }
   }
 
+  async handleStopCapture(clientId) {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+
+    if (client.currentCapture) {
+      client.currentCapture.isActive = false;
+      client.currentCapture = null;
+      client.fingerType = null;
+
+      this.sendToClient(clientId, {
+        type: 'capture_stopped',
+        payload: { timestamp: Date.now() }
+      });
+    }
+  }
+
   async handleStopVerification(clientId) {
     const client = this.clients.get(clientId);
     if (!client) return;
@@ -346,8 +379,11 @@ class WebSocketManager {
 
   async handleLivePreview(clientId) {
     const client = this.clients.get(clientId);
-    if (!client || !client.isAuthenticated) {
-      throw new Error('Unauthenticated client');
+    if (!client) return;
+
+    // ✅ Allow live preview even without authentication
+    if (!client.isAuthenticated) {
+      console.log(`⚠️ Client ${clientId} not authenticated, but allowing live preview`);
     }
 
     const BiometricService = require('../services/biometricService');
@@ -393,7 +429,7 @@ class WebSocketManager {
           }
         });
       }
-    }, 33); // ~30fps
+    }, 33);
 
     // Store interval for cleanup
     client._livePreviewInterval = streamInterval;
@@ -453,7 +489,6 @@ class WebSocketManager {
     let sent = 0;
     this.wss.clients.forEach((ws) => {
       if (ws.readyState === WebSocket.OPEN) {
-        // Find client by ws reference
         let foundClient = null;
         for (const [id, client] of this.clients) {
           if (client.ws === ws) {

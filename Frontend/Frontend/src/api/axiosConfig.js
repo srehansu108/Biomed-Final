@@ -1,6 +1,7 @@
+// client/src/api/axiosConfig.js
 import axios from 'axios';
 
-// Use import.meta.env instead of process.env in Vite
+// ✅ Direct URL for now
 const API_URL = 'http://localhost:8000/api/v1';
 
 const axiosInstance = axios.create({
@@ -31,7 +32,6 @@ axiosInstance.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Handle token expiration
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       
@@ -50,7 +50,6 @@ axiosInstance.interceptors.response.use(
           return axiosInstance(originalRequest);
         }
       } catch (refreshError) {
-        // Refresh failed - logout
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
         localStorage.removeItem('user');

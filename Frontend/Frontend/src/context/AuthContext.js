@@ -1,4 +1,4 @@
-// client/src/context/AuthContext.js - UPDATED
+// client/src/context/AuthContext.js - FIXED
 import React, { createContext, useState, useEffect } from 'react';
 import axiosInstance from '../api/axiosConfig';
 import { ENDPOINTS } from '../api/endpoints';
@@ -61,8 +61,9 @@ export const AuthProvider = ({ children }) => {
         dataToSend = formData;
       }
 
+      // ✅ FIXED: Use REGISTER instead of REGISTER_VOLUNTEER
       const response = await axiosInstance.post(
-        ENDPOINTS.AUTH.REGISTER_VOLUNTEER,
+        ENDPOINTS.AUTH.REGISTER,  // ✅ Correct!
         dataToSend,
         {
           headers: dataToSend instanceof FormData ? {
@@ -88,6 +89,7 @@ export const AuthProvider = ({ children }) => {
   // Login volunteer
   const login = async (email, fingerprintData) => {
     try {
+      // ✅ FIXED: Use LOGIN
       const response = await axiosInstance.post(ENDPOINTS.AUTH.LOGIN, {
         email,
         fingerprintData,
