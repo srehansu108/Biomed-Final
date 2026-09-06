@@ -1,3 +1,5 @@
+// models/AuditLog.js - COMPLETE FIX
+
 const mongoose = require('mongoose');
 
 const AuditLogSchema = new mongoose.Schema({
@@ -12,11 +14,13 @@ const AuditLogSchema = new mongoose.Schema({
     required: true,
     enum: [
       'register', 'login', 'logout',
+      'register_volunteer',  // ✅ ADD THIS
       'fingerprint_capture', 'fingerprint_verify', 'fingerprint_delete',
       'profile_update', 'profile_delete',
       'user_create', 'user_update', 'user_delete', 'user_suspend',
       'admin_action', 'system_action',
-      'security_alert', 'anomaly_detected'
+      'security_alert', 'anomaly_detected',
+      'update_volunteer', 'delete_volunteer', 'refresh_token'  // ✅ ADD THESE
     ]
   },
   status: {
@@ -64,7 +68,7 @@ const AuditLogSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  capped: { size: 1024 * 1024 * 100, max: 100000 } // 100MB, 100k documents
+  capped: { size: 1024 * 1024 * 100, max: 100000 }
 });
 
 // Methods

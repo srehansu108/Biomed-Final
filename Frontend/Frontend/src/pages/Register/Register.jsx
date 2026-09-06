@@ -1,4 +1,5 @@
-// client/src/pages/Register/Register.jsx - UPDATED
+// client/src/pages/Register/Register.jsx - FIXED
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -11,30 +12,26 @@ const Register = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
   const [step, setStep] = useState(1);
-  
-  // Complete form data for volunteer registration
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // ✅ Initialize all fields properly
   const [formData, setFormData] = useState({
-    // Volunteer Identification
-    volunteerId: '',
-    initials: '',
-    profilePhoto: null,
-    
     // Personal Information
     firstName: '',
     middleName: '',
     lastName: '',
-    dateOfBirth: '',
-    age: null,
+    dateOfBirth: null,  // Store as Date object
     gender: '',
     maritalStatus: '',
     
-    // Location Details
+    // Location
     stateOfOrigin: '',
     localGovernment: '',
     city: '',
     residentialAddress: '',
     
-    // Contact Information
+    // Contact
     phone: '',
     alternatePhone: '',
     emergencyContactName: '',
@@ -49,7 +46,7 @@ const Register = () => {
     },
     languageNotes: '',
     
-    // Dietary Habits
+    // Dietary
     dietaryHabit: '',
     
     // Documents
@@ -57,20 +54,17 @@ const Register = () => {
     documents: [],
     
     // Education & Occupation
-    education: '',
+    education: [],
     occupation: '',
     remarks: '',
     
-    // Biometrics (from step 2)
-    fingerprints: {},
-    profileImage: null
+    // Biometrics
+    fingerprints: {},   // Will be filled in Step2
+    profilePhoto: null, // File object
+    profileImage: null  // Base64 from webcam
   });
-  
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
 
   const handleNextStep = () => {
-    // Validation is handled inside Step1Details
     setStep(2);
   };
 
@@ -79,16 +73,31 @@ const Register = () => {
     setError('');
 
     try {
-      // Combine all form data
+      // ✅ Combine all form data
       const registrationData = {
         ...formData,
-        fingerprints: data.fingerprints || formData.fingerprints,
-        profileImage: data.profileImage || formData.profileImage,
+        fingerprints: data.fingerprints || {},
+        profilePhoto: data.profileImage ? null : formData.profilePhoto, // Use file if available
+        profileImage: data.profileImage || null, // Use webcam image
+        // Ensure required fields are present
       };
+
+      // ✅ Log data before sending
+      console.log('📤 Registration data:', {
+        firstName: registrationData.firstName,
+        lastName: registrationData.lastName,
+        phone: registrationData.phone,
+        hasProfilePhoto: !!registrationData.profilePhoto,
+        hasProfileImage: !!registrationData.profileImage,
+        fingerprintsCount: Object.keys(registrationData.fingerprints).length,
+        documentsCount: registrationData.documents?.length || 0
+      });
 
       await register(registrationData);
       navigate('/dashboard');
+      
     } catch (err) {
+      console.error('Registration failed:', err);
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
       setIsLoading(false);

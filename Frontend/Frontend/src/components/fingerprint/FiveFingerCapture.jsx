@@ -1,5 +1,6 @@
-// client/src/components/fingerprint/FiveFingerCapture.jsx
-import React, { useState, useEffect } from 'react';
+// client/src/components/fingerprint/FiveFingerCapture.jsx - COMPLETE FIX
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FingerprintVisualizer } from './FingerprintVisualizer';
 import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
 import { QualityIndicator } from './QualityIndicator';
@@ -16,7 +17,13 @@ const FINGER_NAMES = {
 
 const FINGER_ORDER = ['right_thumb', 'right_index', 'right_middle', 'right_ring', 'right_little'];
 
-export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) => {
+export const FiveFingerCapture = ({ 
+  onComplete, 
+  onProgress, 
+  onError,
+  disabled = false,
+  className = '' 
+}) => {
   const {
     isConnected,
     isAuthenticated,
@@ -24,9 +31,11 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
     captureProgress,
     fingerprintData,
     error: wsError,
-    scannerStatus, // ✅ Get scanner status
+    scannerStatus,
     startCapture,
     stopCapture,
+    resetFingerprintData,
+    clearError,
   } = useFingerprintWebSocket();
 
   const [currentFingerIndex, setCurrentFingerIndex] = useState(0);
@@ -34,12 +43,13 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
   const [localError, setLocalError] = useState('');
   const [isComplete, setIsComplete] = useState(false);
   const [currentFingerData, setCurrentFingerData] = useState(null);
+  const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
 
   const currentFinger = FINGER_ORDER[currentFingerIndex];
   const progress = (currentFingerIndex / FINGER_ORDER.length) * 100;
 
   // ✅ Get scanner status display
-  const getScannerDisplay = () => {
+  const getScannerDisplay = useCallback(() => {
     if (!isConnected) {
       return { text: '🔴 Scanner Disconnected', color: 'text-red-500', bg: 'bg-red-50' };
     }
@@ -51,68 +61,154 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
       return { text: '🟡 Simulated Mode (No Device)', color: 'text-yellow-500', bg: 'bg-yellow-50' };
     }
     return { text: '🔴 Scanner Offline', color: 'text-red-500', bg: 'bg-red-50' };
-  };
+  }, [isConnected, scannerStatus]);
 
   const scannerDisplay = getScannerDisplay();
 
-  // ... rest of your existing effects and handlers ...
-
-  // Effects
+  // ✅ Handle fingerprint data from WebSocket - FIXED
   useEffect(() => {
-    if (fingerprintData && fingerprintData.fingerType === currentFinger) {
-      const updatedFingers = {
-        ...capturedFingers,
-        [currentFinger]: fingerprintData,
-      };
-      setCapturedFingers(updatedFingers);
-      setCurrentFingerData(fingerprintData);
+    if (!fingerprintData) return;
 
-      if (currentFingerIndex < FINGER_ORDER.length - 1) {
+    console.log('📥 Raw fingerprint data received:', fingerprintData);
+
+    // ✅ Extract the finger type and data
+    const fingerType = fingerprintData.fingerType || 
+                       fingerprintData.fingerType || 
+                       currentFinger;
+
+    // ✅ Ensure we have the data property
+    let templateData = fingerprintData.data || 
+                       fingerprintData.template || 
+                       fingerprintData.templateData;
+
+    // ✅ If data is base64 encoded, keep it as is
+    if (templateData && typeof templateData === 'string') {
+      // Data is already a string (base64 or raw)
+      console.log(`✅ Valid data found for ${fingerType}:`, templateData.substring(0, 50) + '...');
+    } else if (templateData && typeof templateData === 'object') {
+      // Data is an object, convert to string
+      templateData = JSON.stringify(templateData);
+    } else {
+      console.error(`❌ No valid data found for ${fingerType}`);
+      setLocalError(`No fingerprint data received for ${FINGER_NAMES[fingerType]}`);
+      return;
+    }
+
+    // ✅ Create proper fingerprint data structure
+    const capturedData = {
+      data: templateData,  // ✅ This is what AuthContext expects
+      format: fingerprintData.format || 'ISO_19794_2',
+      quality: fingerprintData.quality || 70,
+      metrics: fingerprintData.metrics || {},
+      imageData: fingerprintData.imageData || null,
+      minutiae: fingerprintData.minutiae || [],
+    };
+
+    console.log(`✅ Captured ${fingerType} with quality: ${capturedData.quality}%`);
+    console.log(`📊 Data length: ${capturedData.data.length} characters`);
+
+    // ✅ Store current finger data
+    setCurrentFingerData(capturedData);
+    
+    // ✅ Add to captured fingers
+    const updatedFingers = {
+      ...capturedFingers,
+      [fingerType]: capturedData,  // ✅ Structure matches AuthContext expectation
+    };
+    setCapturedFingers(updatedFingers);
+
+    // ✅ Auto-advance to next finger
+    if (!isAutoAdvancing) {
+      setIsAutoAdvancing(true);
+      
+      const currentIndex = FINGER_ORDER.indexOf(fingerType);
+      
+      if (currentIndex < FINGER_ORDER.length - 1) {
+        // Move to next finger after delay
+        const nextIndex = currentIndex + 1;
         setTimeout(() => {
-          setCurrentFingerIndex((prev) => prev + 1);
+          setCurrentFingerIndex(nextIndex);
           setCurrentFingerData(null);
+          setIsAutoAdvancing(false);
+          resetFingerprintData();
         }, 1500);
       } else {
+        // All fingers captured
         setIsComplete(true);
         setTimeout(() => {
+          // ✅ Send complete data with proper structure
+          console.log('🎉 All fingers captured:', updatedFingers);
           onComplete?.(updatedFingers);
         }, 500);
       }
     }
+  }, [fingerprintData, currentFinger, capturedFingers, onComplete, resetFingerprintData, isAutoAdvancing]);
+
+  // ✅ Handle WebSocket errors
+  useEffect(() => {
     if (wsError) {
       setLocalError(wsError);
+      onError?.(new Error(wsError));
     }
-  }, [fingerprintData, wsError]);
+  }, [wsError, onError]);
 
+  // ✅ Update progress
   useEffect(() => {
     if (onProgress) {
       onProgress({
-        currentFinger,
+        progress: progress + (captureProgress / FINGER_ORDER.length),
         capturedCount: Object.keys(capturedFingers).length,
-        total: FINGER_ORDER.length,
-        progress: progress,
         capturedFingers: capturedFingers,
-        isCapturing,
-        captureProgress,
+        currentFinger: currentFinger,
+        isCapturing: isCapturing,
+        status: isComplete ? 'complete' : isCapturing ? 'capturing' : 'ready',
       });
     }
-  }, [capturedFingers, currentFingerIndex, progress, isCapturing, captureProgress]);
+  }, [capturedFingers, currentFingerIndex, progress, isCapturing, captureProgress, isComplete]);
 
-  // Handlers
+  // ✅ Handle start capture
   const handleStartCapture = () => {
     setLocalError('');
+    clearError();
+    console.log(`🔍 Starting capture for: ${currentFinger}`);
     startCapture(currentFinger);
   };
 
+  // ✅ Handle stop capture
   const handleStopCapture = () => {
     stopCapture();
   };
 
+  // ✅ Handle retry for current finger
+  const handleRetry = () => {
+    setCurrentFingerData(null);
+    setLocalError('');
+    clearError();
+    // Remove current finger from captured list
+    const updated = { ...capturedFingers };
+    delete updated[currentFinger];
+    setCapturedFingers(updated);
+    resetFingerprintData();
+  };
+
+  // ✅ Reset all fingerprints
+  const handleReset = () => {
+    setCapturedFingers({});
+    setCurrentFingerIndex(0);
+    setCurrentFingerData(null);
+    setIsComplete(false);
+    setIsAutoAdvancing(false);
+    resetFingerprintData();
+    setLocalError('');
+    clearError();
+  };
+
   const allFingersCaptured = Object.keys(capturedFingers).length === FINGER_ORDER.length;
 
+  // ✅ Render
   return (
     <div className={`space-y-6 ${className}`}>
-      {/* ✅ SCANNER STATUS DISPLAY - Top Section */}
+      {/* Scanner Status Display */}
       <div className={`p-3 rounded-lg border ${scannerDisplay.bg} border-gray-200`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -128,7 +224,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
           )}
         </div>
         {scannerStatus.isSimulated && !scannerStatus.deviceConnected && (
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-yellow-600 mt-1">
             💡 No physical scanner detected. Using simulated mode for development.
           </p>
         )}
@@ -139,7 +235,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
         )}
       </div>
 
-      {/* 🔥 LIVE FINGERPRINT VISUALIZER */}
+      {/* Fingerprint Visualizer */}
       <div className="relative">
         <FingerprintVisualizer
           imageData={currentFingerData?.imageData || null}
@@ -151,10 +247,9 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
           height={400}
           showMinutiae={true}
           showHeatmap={true}
-          onFingerDetected={() => console.log('Finger detected!')}
         />
 
-        {/* ✅ FIXED Scanner status overlay - bottom of visualizer */}
+        {/* Status Overlay */}
         <div className="absolute bottom-4 left-4 right-4">
           <div className="flex items-center justify-between">
             <span className={`text-xs ${isConnected ? 'text-white/80' : 'text-red-400'}`}>
@@ -196,6 +291,11 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
               ? '✅ All Fingers Captured!'
               : `Step ${currentFingerIndex + 1}: ${FINGER_NAMES[currentFinger]}`}
           </h4>
+          {isComplete && (
+            <Button variant="secondary" size="sm" onClick={handleReset}>
+              Reset All
+            </Button>
+          )}
         </div>
 
         {!isComplete && (
@@ -210,20 +310,17 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                       <p className="text-sm text-green-700">
                         Quality: {Math.round(currentFingerData.quality)}%
                       </p>
+                      <p className="text-xs text-green-600 mt-1">
+                        Data size: {currentFingerData.data.length} characters
+                      </p>
                     </div>
                   </div>
                 </div>
                 <QualityIndicator quality={currentFingerData.quality} />
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setCurrentFingerData(null);
-                    setCapturedFingers((prev) => {
-                      const updated = { ...prev };
-                      delete updated[currentFinger];
-                      return updated;
-                    });
-                  }}
+                  onClick={handleRetry}
+                  disabled={isAutoAdvancing}
                 >
                   Rescan
                 </Button>
@@ -233,7 +330,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                 <Button
                   onClick={handleStartCapture}
                   isLoading={isCapturing}
-                  disabled={isCapturing || !isConnected || !isAuthenticated}
+                  disabled={isCapturing || !isConnected || disabled || isAutoAdvancing}
                   className="w-full"
                   size="lg"
                 >
@@ -241,8 +338,6 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                     ? `Scanning ${FINGER_NAMES[currentFinger]}...`
                     : !isConnected
                     ? '🔴 Scanner Not Connected'
-                    : !isAuthenticated
-                    ? '🔐 Please Login First'
                     : `Capture ${FINGER_NAMES[currentFinger]}`}
                 </Button>
 
@@ -265,6 +360,9 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
               <div>
                 <h5 className="font-semibold text-green-800">All Fingers Captured!</h5>
                 <p className="text-sm text-green-700">Quality scores are good. Ready to save.</p>
+                <p className="text-xs text-green-600 mt-1">
+                  Total data size: {Object.values(capturedFingers).reduce((sum, f) => sum + f.data.length, 0)} characters
+                </p>
               </div>
             </div>
           </div>
@@ -285,6 +383,7 @@ export const FiveFingerCapture = ({ onComplete, onProgress, className = '' }) =>
                 ${isCaptured ? 'bg-green-50 border-green-400' : 'bg-gray-50 border-gray-300'}
                 ${isCurrent && !isCaptured ? 'border-2 border-biomed-green animate-pulse' : 'border'}
                 ${isCaptured ? 'opacity-100' : 'opacity-70'}
+                ${disabled ? 'opacity-50' : ''}
               `}
             >
               <div className="text-sm font-medium text-gray-700 truncate">

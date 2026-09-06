@@ -1,4 +1,5 @@
-// controllers/authController.js - COMPLETE VOLUNTEER REGISTRATION (FIXED)
+// controllers/authController.js - COMPLETE VOLUNTEER REGISTRATION (FULLY FIXED)
+
 const Volunteer = require('../models/User');
 const Fingerprint = require('../models/Fingerprint');
 const Session = require('../models/Session');
@@ -7,10 +8,14 @@ const EncryptionService = require('../services/encryptionService');
 const BiometricService = require('../services/biometricService');
 const AuditService = require('../services/auditService');
 const { sendSuccess, sendError } = require('../utils/response');
-const { FINGER_TYPES } = require('../config/biometric');
 const { deleteProfileImage } = require('../middleware/upload');
 const fs = require('fs');
 const path = require('path');
+
+// ✅ Define valid finger types directly (no config dependency)
+const VALID_FINGER_TYPES = [
+  'right_thumb', 'right_index', 'right_middle', 'right_ring', 'right_little'
+];
 
 class AuthController {
   /**
@@ -44,6 +49,7 @@ class AuthController {
         firstName,
         lastName,
         phone,
+        dateOfBirth,
         fingerprintsCount: fingerprints ? Object.keys(fingerprints).length : 0,
         hasProfilePhoto: !!profilePhotoFile,
         documentCount: documentFiles.length
@@ -108,39 +114,79 @@ class AuthController {
 
       if (languages) {
         try {
-          parsedLanguages = typeof languages === 'string' 
-            ? JSON.parse(languages) 
-            : languages;
+          let langData = typeof languages === 'string' ? JSON.parse(languages) : languages;
+          
+          parsedLanguages = {
+            english: { ...parsedLanguages.english, ...(langData.english || {}) },
+            yoruba: { ...parsedLanguages.yoruba, ...(langData.yoruba || {}) },
+            igbo: { ...parsedLanguages.igbo, ...(langData.igbo || {}) },
+            hausa: { ...parsedLanguages.hausa, ...(langData.hausa || {}) },
+            other: { ...parsedLanguages.other, ...(langData.other || {}) }
+          };
+          
+          console.log('🔤 Parsed languages:', Object.keys(parsedLanguages));
         } catch (e) {
-          console.warn('Failed to parse languages, using default');
+          console.warn('⚠️ Failed to parse languages:', e.message);
         }
       }
 
       // ============================================
-      // 5. PARSE ID PROOF TYPES
+      // 5. PARSE ID PROOF TYPES - FIXED
       // ============================================
-      let parsedIdProofType = [];
+      let parsedIdProofType = ['NIN'];
       if (idProofType) {
         try {
-          parsedIdProofType = typeof idProofType === 'string'
-            ? JSON.parse(idProofType)
-            : idProofType;
+          let proofs = typeof idProofType === 'string' ? JSON.parse(idProofType) : idProofType;
+          if (Array.isArray(proofs) && proofs.length > 0) {
+            const validTypes = [
+              'Driving License', 'Voters ID Card', 'NIN',
+              'Organization ID-Card', 'School Leaving Certificate',
+              'Passport', 'Election Card', 'Others'
+            ];
+            parsedIdProofType = proofs.filter(p => validTypes.includes(p));
+            if (parsedIdProofType.length === 0) {
+              parsedIdProofType = ['NIN'];
+            }
+          }
         } catch (e) {
-          parsedIdProofType = [idProofType];
+          console.warn('⚠️ Failed to parse ID proof types:', e.message);
+          parsedIdProofType = ['NIN'];
         }
       }
 
       // ============================================
-      // 6. PARSE EDUCATION - FIXED (handle array from frontend)
+      // 6. PARSE EDUCATION - FIXED
       // ============================================
-      let parsedEducation = [];
+      let parsedEducation = 'University';
       if (education) {
         try {
-          parsedEducation = typeof education === 'string'
-            ? JSON.parse(education)
-            : education;
+          let edu = typeof education === 'string' ? JSON.parse(education) : education;
+          if (Array.isArray(edu) && edu.length > 0) {
+            const validEducation = [
+              'Primary', 'JSS', 'SSS', 'Graduation',
+              'Illiterate', 'University', 'PG', 'Other'
+            ];
+            const filtered = edu.filter(e => validEducation.includes(e));
+            if (filtered.length > 0) {
+              parsedEducation = filtered[0];
+            }
+          } else if (typeof edu === 'string') {
+            const validEducation = [
+              'Primary', 'JSS', 'SSS', 'Graduation',
+              'Illiterate', 'University', 'PG', 'Other'
+            ];
+            if (validEducation.includes(edu)) {
+              parsedEducation = edu;
+            }
+          }
         } catch (e) {
-          parsedEducation = [education];
+          const validEducation = [
+            'Primary', 'JSS', 'SSS', 'Graduation',
+            'Illiterate', 'University', 'PG', 'Other'
+          ];
+          if (validEducation.includes(education)) {
+            parsedEducation = education;
+          }
         }
       }
 
@@ -178,7 +224,7 @@ class AuthController {
       // 8. HANDLE PROFILE PHOTO - FIXED
       // ============================================
       if (profilePhotoFile) {
-        volunteer.profileImage = profilePhotoFile.path;
+        volunteer.profilePhoto = profilePhotoFile.path;  // ✅ Changed from profileImage
         console.log('📸 Profile photo saved:', profilePhotoFile.path);
       } else if (profileImage && typeof profileImage === 'string' && profileImage.startsWith('data:image')) {
         try {
@@ -193,7 +239,7 @@ class AuthController {
           }
           
           fs.writeFileSync(filepath, imageBuffer);
-          volunteer.profileImage = filepath;
+          volunteer.profilePhoto = filepath;  // ✅ Changed from profileImage
           console.log('📸 Base64 profile photo saved:', filepath);
         } catch (error) {
           console.error('Failed to save base64 image:', error);
@@ -201,7 +247,7 @@ class AuthController {
       }
 
       // ============================================
-      // 9. HANDLE MULTIPLE DOCUMENTS - FIXED
+      // 9. HANDLE MULTIPLE DOCUMENTS
       // ============================================
       if (documentFiles && documentFiles.length > 0) {
         const documentPaths = documentFiles.map(file => file.path);
@@ -221,30 +267,129 @@ class AuthController {
       console.log('🔤 Initials:', volunteer.initials);
 
       // ============================================
-      // 11. SAVE FINGERPRINTS
+      // 11. SAVE FINGERPRINTS - CRITICAL FIX FOR STRING DATA
       // ============================================
       console.log('🔐 Saving fingerprints...');
-      const savedFingerprints = [];
       
-      for (const [fingerType, fingerData] of Object.entries(fingerprints)) {
-        if (!Object.values(FINGER_TYPES).includes(fingerType)) {
-          await Volunteer.findByIdAndDelete(volunteer._id);
-          return sendError(res, 400, `Invalid finger type: ${fingerType}`);
+      // ✅ DEBUG: Log fingerprint structure
+      console.log('📊 Fingerprints type:', typeof fingerprints);
+      
+      // ✅ CRITICAL FIX: If fingerprints is a string, convert it
+      let processedFingerprints = fingerprints;
+      
+      if (typeof fingerprints === 'string') {
+        console.log('⚠️ Fingerprints is a STRING! Attempting to fix...');
+        console.log(`📊 String length: ${fingerprints.length}`);
+        console.log(`📊 First 100 chars: ${fingerprints.substring(0, 100)}...`);
+        
+        // Try to parse as JSON
+        try {
+          const parsed = JSON.parse(fingerprints);
+          console.log('✅ Successfully parsed JSON string');
+          processedFingerprints = parsed;
+        } catch (e) {
+          console.log('⚠️ Not JSON, treating as raw fingerprint data');
+          // If it's a long string, it's probably the actual fingerprint data
+          // Save it as right_thumb
+          processedFingerprints = {
+            right_thumb: {
+              data: fingerprints,
+              quality: 70,
+              format: 'SCANNER_RAW',
+              metrics: { rawData: true, length: fingerprints.length }
+            }
+          };
+          console.log('✅ Converted string to right_thumb object');
+        }
+      }
+      
+      // ✅ Check if we have valid data now
+      if (typeof processedFingerprints !== 'object' || processedFingerprints === null) {
+        console.error('❌ Invalid fingerprints format after processing:', typeof processedFingerprints);
+        return sendError(res, 400, 'Invalid fingerprint data format');
+      }
+
+      console.log('📊 Fingerprints keys:', Object.keys(processedFingerprints));
+      console.log('📊 Is array?', Array.isArray(processedFingerprints));
+      console.log('📊 Fingerprints count:', Object.keys(processedFingerprints).length);
+      
+      // ✅ Normalize fingerprints to object format
+      let normalizedFingerprints = {};
+
+      if (Array.isArray(processedFingerprints)) {
+        console.log('📊 Fingerprints is an array, converting to object...');
+        for (const item of processedFingerprints) {
+          if (item && typeof item === 'object') {
+            Object.assign(normalizedFingerprints, item);
+          } else {
+            console.warn('⚠️ Invalid fingerprint array item:', item);
+          }
+        }
+      } else if (typeof processedFingerprints === 'object' && processedFingerprints !== null) {
+        console.log('📊 Fingerprints is an object');
+        normalizedFingerprints = processedFingerprints;
+      } else {
+        console.error('❌ Invalid fingerprints format:', typeof processedFingerprints);
+        return sendError(res, 400, 'Invalid fingerprint data format');
+      }
+
+      console.log(`📊 Normalized fingerprints keys: ${Object.keys(normalizedFingerprints).join(', ')}`);
+
+      if (Object.keys(normalizedFingerprints).length === 0) {
+        console.error('❌ No fingerprints found after normalization');
+        return sendError(res, 400, 'No valid fingerprint data found');
+      }
+
+      const savedFingerprints = [];
+
+      for (const [fingerType, fingerData] of Object.entries(normalizedFingerprints)) {
+        console.log(`  📌 Processing ${fingerType}...`);
+        console.log(`  📌 Data type: ${typeof fingerData}`);
+        console.log(`  📌 Has data: ${!!fingerData?.data}`);
+        console.log(`  📌 Data length: ${fingerData?.data?.length || 0}`);
+        
+        // ✅ Validate finger type
+        if (!VALID_FINGER_TYPES.includes(fingerType)) {
+          console.warn(`⚠️ Skipping invalid finger type: ${fingerType}`);
+          continue;
         }
 
-        if (!fingerData || !fingerData.data || typeof fingerData.data !== 'string') {
-          await Volunteer.findByIdAndDelete(volunteer._id);
-          return sendError(res, 400, `Invalid ${fingerType} template data`);
+        // ✅ Extract data from multiple possible locations
+        let templateData = null;
+        
+        if (fingerData && typeof fingerData === 'object') {
+          // Try different data locations
+          templateData = fingerData.data || 
+                         fingerData.template || 
+                         fingerData.templateData || 
+                         fingerData.fingerprintData;
+                         
+          // If data is an object with data property
+          if (templateData && typeof templateData === 'object' && templateData.data) {
+            templateData = templateData.data;
+          }
+        } else if (typeof fingerData === 'string') {
+          templateData = fingerData;
+        }
+        
+        if (!templateData || typeof templateData !== 'string' || templateData.length < 10) {
+          console.warn(`⚠️ No valid data found for ${fingerType}`);
+          continue;
         }
 
-        let templateData = fingerData.data;
+        console.log(`  ✅ Valid data for ${fingerType}: ${templateData.length} chars`);
+
+        let processedData = templateData;
         try {
           const decompressed = Buffer.from(templateData, 'base64').toString();
-          templateData = decompressed;
-        } catch (e) {}
+          processedData = decompressed;
+          console.log(`  ✅ Decompressed ${fingerType} data`);
+        } catch (e) {
+          console.log(`  ℹ️ Using raw data for ${fingerType}`);
+        }
 
-        const encrypted = EncryptionService.encrypt(templateData, volunteer._id.toString());
-        const qualityScore = fingerData.quality || 70;
+        const encrypted = EncryptionService.encrypt(processedData, volunteer._id.toString());
+        const qualityScore = fingerData?.quality || 70;
 
         const fingerprint = new Fingerprint({
           userId: volunteer._id,
@@ -253,9 +398,9 @@ class AuthController {
           templateEncrypted: encrypted.encrypted,
           templateIv: encrypted.iv,
           templateAuthTag: encrypted.authTag,
-          templateFormat: fingerData.format || 'ISO_19794_2',
+          templateFormat: fingerData?.format || 'ISO_19794_2',
           qualityScore: qualityScore,
-          qualityMetrics: fingerData.metrics || {},
+          qualityMetrics: fingerData?.metrics || {},
           isActive: true,
           isPrimary: fingerType === 'right_thumb',
           deviceInfo: {
@@ -267,44 +412,67 @@ class AuthController {
 
         await fingerprint.save();
         savedFingerprints.push(fingerprint);
-        console.log(`  ✅ ${fingerType} saved`);
+        console.log(`  ✅ ${fingerType} saved with quality: ${qualityScore}%`);
+      }
+
+      // ✅ Check if any fingerprints were saved
+      if (savedFingerprints.length === 0) {
+        console.error('❌ No fingerprints were saved!');
+        await Volunteer.findByIdAndDelete(volunteer._id);
+        return sendError(res, 400, 'Failed to save fingerprints. Please try again.');
+      }
+
+      console.log(`✅ ${savedFingerprints.length} fingerprints saved successfully`);
+
+      // ============================================
+      // 12. LOG AUDIT - WITH ERROR HANDLING
+      // ============================================
+      try {
+        await AuditService.log({
+          userId: volunteer._id,
+          action: 'register_volunteer',
+          status: 'success',
+          req,
+          details: { 
+            firstName, 
+            lastName,
+            phone: sanitizedPhone,
+            volunteerId: volunteer.volunteerId,
+            fingerprints: Object.keys(normalizedFingerprints).length,
+            documents: documentFiles.length
+          }
+        });
+        console.log('✅ Audit log saved');
+      } catch (error) {
+        console.warn('⚠️ Audit log failed (non-critical):', error.message);
+        // ✅ Continue registration even if audit fails
       }
 
       // ============================================
-      // 12. LOG AUDIT
+      // 13. GENERATE TOKENS AND SESSION - WITH ERROR HANDLING
       // ============================================
-      await AuditService.log({
-        userId: volunteer._id,
-        action: 'register_volunteer',
-        status: 'success',
-        req,
-        details: { 
-          firstName, 
-          lastName,
-          phone: sanitizedPhone,
-          volunteerId: volunteer.volunteerId,
-          fingerprints: Object.keys(fingerprints).length,
-          documents: documentFiles.length
-        }
-      });
-
-      // ============================================
-      // 13. GENERATE TOKENS
-      // ============================================
+      console.log('🔐 Generating tokens...');
       const tokens = JWTService.generateTokenPair(volunteer);
 
-      const session = new Session({
-        userId: volunteer._id,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        deviceInfo: {
-          userAgent: req.headers['user-agent'],
-          ipAddress: req.ip || req.connection.remoteAddress
-        },
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      });
-      await session.save();
+      let session = null;
+      try {
+        session = new Session({
+          userId: volunteer._id,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          deviceInfo: {
+            userAgent: req.headers['user-agent'],
+            ipAddress: req.ip || req.connection.remoteAddress
+          },
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+        await session.save();
+        console.log('✅ Session saved');
+      } catch (error) {
+        console.error('❌ Session save error:', error.message);
+        // ✅ Still continue - session can be created later
+      }
 
       console.log('✅ ===== VOLUNTEER REGISTRATION COMPLETED =====\n');
       
@@ -312,7 +480,7 @@ class AuthController {
         user: volunteer.sanitize(),
         fingerprints: savedFingerprints.map(f => f.sanitize()),
         tokens,
-        session: session.sanitize()
+        session: session ? session.sanitize() : null
       });
 
     } catch (error) {
@@ -396,7 +564,7 @@ class AuthController {
       for (const [fingerType, fingerData] of Object.entries(fingerprints)) {
         console.log(`  📌 Processing ${fingerType}...`);
         
-        if (!Object.values(FINGER_TYPES).includes(fingerType)) {
+        if (!VALID_FINGER_TYPES.includes(fingerType)) {
           await Volunteer.findByIdAndDelete(user._id);
           return sendError(res, 400, `Invalid finger type: ${fingerType}`);
         }
@@ -439,32 +607,41 @@ class AuthController {
         console.log(`  ✅ ${fingerType} saved`);
       }
 
-      await AuditService.log({
-        userId: user._id,
-        action: 'register',
-        status: 'success',
-        req,
-        details: { 
-          fullName, 
-          email: sanitizedEmail,
-          fingerprints: Object.keys(fingerprints).length 
-        }
-      });
+      try {
+        await AuditService.log({
+          userId: user._id,
+          action: 'register',
+          status: 'success',
+          req,
+          details: { 
+            fullName, 
+            email: sanitizedEmail,
+            fingerprints: Object.keys(fingerprints).length 
+          }
+        });
+      } catch (error) {
+        console.warn('⚠️ Audit log failed (non-critical):', error.message);
+      }
 
       const tokens = JWTService.generateTokenPair(user);
 
-      const session = new Session({
-        userId: user._id,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        deviceInfo: {
-          userAgent: req.headers['user-agent'],
-          ipAddress: req.ip
-        },
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      });
-      await session.save();
+      let session = null;
+      try {
+        session = new Session({
+          userId: user._id,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          deviceInfo: {
+            userAgent: req.headers['user-agent'],
+            ipAddress: req.ip
+          },
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+        await session.save();
+      } catch (error) {
+        console.error('❌ Session save error:', error.message);
+      }
 
       console.log('✅ ===== REGISTRATION COMPLETED =====\n');
       
@@ -472,7 +649,7 @@ class AuthController {
         user: user.sanitize(),
         fingerprints: savedFingerprints.map(f => f.sanitize()),
         tokens,
-        session: session.sanitize()
+        session: session ? session.sanitize() : null
       });
 
     } catch (error) {
@@ -578,18 +755,23 @@ class AuthController {
 
       const tokens = JWTService.generateTokenPair(user);
 
-      const session = new Session({
-        userId: user._id,
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        deviceInfo: {
-          userAgent: req.headers['user-agent'],
-          ipAddress: req.ip
-        },
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      });
-      await session.save();
+      let session = null;
+      try {
+        session = new Session({
+          userId: user._id,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          deviceInfo: {
+            userAgent: req.headers['user-agent'],
+            ipAddress: req.ip
+          },
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          refreshExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+        await session.save();
+      } catch (error) {
+        console.error('❌ Session save error:', error.message);
+      }
 
       console.log('✅ ===== LOGIN COMPLETED =====\n');
 
@@ -597,7 +779,7 @@ class AuthController {
         user: user.sanitize(),
         tokens,
         matchScore: verification.matchScore,
-        session: session.sanitize()
+        session: session ? session.sanitize() : null
       });
     } catch (error) {
       console.error('❌ Login error:', error);
@@ -623,12 +805,16 @@ class AuthController {
         );
       }
 
-      await AuditService.log({
-        userId: req.userId,
-        action: 'logout',
-        status: 'success',
-        req
-      });
+      try {
+        await AuditService.log({
+          userId: req.userId,
+          action: 'logout',
+          status: 'success',
+          req
+        });
+      } catch (error) {
+        console.warn('⚠️ Audit log failed:', error.message);
+      }
 
       sendSuccess(res, 200, 'Logged out successfully');
     } catch (error) {
@@ -812,19 +998,16 @@ class AuthController {
         filteredUpdates.phone = sanitizedPhone;
       }
 
-      // Handle profile image update from files
       const profilePhotoFile = req.files?.profilePhoto?.[0] || null;
       if (profilePhotoFile) {
-        if (volunteer.profileImage) {
-          deleteProfileImage(volunteer.profileImage);
+        if (volunteer.profilePhoto) {
+          deleteProfileImage(volunteer.profilePhoto);
         }
-        filteredUpdates.profileImage = profilePhotoFile.path;
+        filteredUpdates.profilePhoto = profilePhotoFile.path;
       }
 
-      // Handle documents update
       const documentFiles = req.files?.documents || [];
       if (documentFiles.length > 0) {
-        // Delete old documents
         if (volunteer.documents && volunteer.documents.length > 0) {
           volunteer.documents.forEach(doc => deleteProfileImage(doc));
         }
@@ -839,7 +1022,7 @@ class AuthController {
         action: 'update_volunteer',
         status: 'success',
         req,
-        details: { volunteerId: volunteer._id, updatedFields: Object.keys(filteredUpdates) }
+                details: { volunteerId: volunteer._id, updatedFields: Object.keys(filteredUpdates) }
       });
 
       sendSuccess(res, 200, 'Volunteer updated successfully', volunteer.sanitize());
@@ -865,8 +1048,8 @@ class AuthController {
         return sendError(res, 403, 'Only admins can delete volunteers');
       }
 
-      if (volunteer.profileImage) {
-        deleteProfileImage(volunteer.profileImage);
+      if (volunteer.profilePhoto) {
+        deleteProfileImage(volunteer.profilePhoto);
       }
 
       if (volunteer.documents && volunteer.documents.length > 0) {

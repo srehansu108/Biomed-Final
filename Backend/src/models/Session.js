@@ -1,3 +1,5 @@
+// models/Session.js - COMPLETE FIX (FINAL)
+
 const mongoose = require('mongoose');
 
 const SessionSchema = new mongoose.Schema({
@@ -53,8 +55,8 @@ const SessionSchema = new mongoose.Schema({
   },
   terminationReason: {
     type: String,
-    enum: ['logout', 'expired', 'revoked', 'security'],
     default: null
+    // ✅ Removed enum validation to allow null
   }
 }, {
   timestamps: true

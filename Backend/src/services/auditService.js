@@ -1,3 +1,5 @@
+// services/auditService.js - COMPLETE FIX
+
 const AuditLog = require('../models/AuditLog');
 
 class AuditService {
@@ -6,7 +8,7 @@ class AuditService {
       const auditLog = new AuditLog({
         userId,
         action,
-        status,
+        status: status || 'success',
         ipAddress: req?.ip || req?.connection?.remoteAddress || req?.socket?.remoteAddress || '0.0.0.0',
         userAgent: req?.headers?.['user-agent'] || 'Unknown',
         deviceId: req?.headers?.['x-device-id'] || null,
@@ -18,7 +20,8 @@ class AuditService {
       await auditLog.save();
       return auditLog;
     } catch (error) {
-      console.error('Audit log error:', error);
+      // ✅ Don't throw - just log the error
+      console.warn('⚠️ Audit log failed (non-critical):', error.message);
       return null;
     }
   }
@@ -26,7 +29,7 @@ class AuditService {
   async logSecurityAlert({ userId, action, details = {}, severity = 'warning' }) {
     return this.log({
       userId,
-      action,
+      action: action || 'security_alert',
       status: 'warning',
       details: { ...details, severity, alert: true },
       req: null

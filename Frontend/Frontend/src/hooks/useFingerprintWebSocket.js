@@ -1,326 +1,306 @@
-// client/src/hooks/useFingerprintWebSocket.js
+// client/src/hooks/useFingerprintWebSocket.js - SINGLETON VERSION
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// ✅ Singleton WebSocket Manager
+class WebSocketManager {
+  constructor() {
+    if (WebSocketManager.instance) {
+      return WebSocketManager.instance;
+    }
+    
+    this.ws = null;
+    this.isConnected = false;
+    this.isConnecting = false;
+    this.subscribers = new Set();
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.scannerStatus = {
+      status: 'offline',
+      isReady: false,
+      isSimulated: true,
+      deviceConnected: false,
+      scannerType: 'unknown',
+      deviceInfo: null,
+      lastUpdated: null,
+    };
+    
+    WebSocketManager.instance = this;
+  }
+
+  // ✅ Subscribe to WebSocket events
+  subscribe(callback) {
+    this.subscribers.add(callback);
+    return () => this.subscribers.delete(callback);
+  }
+
+  // ✅ Notify all subscribers
+  notify(data) {
+    this.subscribers.forEach(callback => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error('Subscriber error:', error);
+      }
+    });
+  }
+
+  // ✅ Connect once
+  connect() {
+    if (this.isConnecting || this.isConnected) {
+      console.log('⚠️ WebSocket already connecting or connected');
+      return;
+    }
+
+    this.isConnecting = true;
+    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/fingerprint';
+    console.log('🔗 Connecting WebSocket (singleton):', wsUrl);
+
+    try {
+      this.ws = new WebSocket(wsUrl);
+      
+      this.ws.onopen = () => {
+        console.log('✅ WebSocket connected (singleton)');
+        this.isConnected = true;
+        this.isConnecting = false;
+        this.reconnectAttempts = 0;
+        
+        this.notify({
+          type: 'connected',
+          payload: { 
+            status: 'connected',
+            timestamp: Date.now(),
+            scanner: this.scannerStatus
+          }
+        });
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          this.notify(data);
+        } catch (error) {
+          console.error('WebSocket parse error:', error);
+        }
+      };
+
+      this.ws.onerror = (event) => {
+        console.error('❌ WebSocket error:', event);
+        this.isConnecting = false;
+      };
+
+      this.ws.onclose = (event) => {
+        console.log('🔌 WebSocket closed:', event.code, event.reason);
+        this.isConnected = false;
+        this.isConnecting = false;
+        
+        this.notify({
+          type: 'disconnected',
+          payload: { 
+            code: event.code,
+            reason: event.reason,
+            timestamp: Date.now()
+          }
+        });
+
+        // ✅ Auto-reconnect with backoff
+        if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
+          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+          
+          setTimeout(() => {
+            this.connect();
+          }, delay);
+        }
+      };
+    } catch (error) {
+      console.error('WebSocket connection error:', error);
+      this.isConnecting = false;
+    }
+  }
+
+  // ✅ Disconnect and cleanup
+  disconnect() {
+    if (this.ws) {
+      this.ws.close(1000, 'Manual disconnect');
+      this.ws = null;
+      this.isConnected = false;
+      this.isConnecting = false;
+      console.log('🔌 WebSocket manually disconnected');
+    }
+  }
+
+  // ✅ Send message
+  sendMessage(data) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+      return true;
+    }
+    console.warn('⚠️ Cannot send message - WebSocket not open');
+    return false;
+  }
+
+  // ✅ Get connection status
+  getStatus() {
+    return {
+      isConnected: this.isConnected,
+      isConnecting: this.isConnecting,
+      scannerStatus: this.scannerStatus,
+    };
+  }
+}
+
+// ✅ Singleton instance
+const wsManager = new WebSocketManager();
+
+// ✅ React Hook using the singleton
 export const useFingerprintWebSocket = () => {
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(wsManager.isConnected);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureProgress, setCaptureProgress] = useState(0);
   const [fingerprintData, setFingerprintData] = useState(null);
   const [liveData, setLiveData] = useState(null);
+  const [scannerStatus, setScannerStatus] = useState(wsManager.scannerStatus);
+  const [connectionCount, setConnectionCount] = useState(0);
 
-  const [scannerStatus, setScannerStatus] = useState({
-    status: 'offline',
-    isReady: false,
-    isSimulated: true,
-    deviceConnected: false,
-    scannerType: 'unknown',
-    deviceInfo: null,
-    lastUpdated: null,
-  });
+  const token = localStorage.getItem('accessToken');
 
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 3;
-  const isMounted = useRef(true);
-  const isConnecting = useRef(false);
-  const token = localStorage.getItem('token');
+  // ✅ Subscribe to WebSocket messages
+  useEffect(() => {
+    console.log(`📡 Subscribing to WebSocket (count: ${connectionCount + 1})`);
+    setConnectionCount(prev => prev + 1);
 
-  const cleanup = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    if (wsRef.current) {
-      try {
-        if (wsRef.current.readyState === WebSocket.OPEN || 
-            wsRef.current.readyState === WebSocket.CONNECTING) {
-          wsRef.current.close(1000, 'Cleanup');
-        }
-      } catch (e) {}
-      wsRef.current = null;
-    }
-    setIsConnected(false);
-    setIsAuthenticated(false);
-    setIsCapturing(false);
-    isConnecting.current = false;
-  }, []);
-
-  // ============================================
-  // WebSocket Message Handler
-  // ============================================
-  const handleWebSocketMessage = useCallback((data) => {
-    console.log('📨 WebSocket Message:', data.type, data.payload);
-
-    switch (data.type) {
-      case 'connected': {
-        console.log('✅ Scanner ready:', data.payload);
-        setIsConnected(true);
-        setError(null);
-        reconnectAttempts.current = 0;
-        isConnecting.current = false;
-
-        if (data.payload.scanner) {
-          const scanner = data.payload.scanner;
-          console.log('📟 Scanner status:', scanner);
-          setScannerStatus({
-            status: scanner.status || 'offline',
-            isReady: scanner.isReady || false,
-            isSimulated: scanner.isSimulated !== false,
-            deviceConnected: scanner.status === 'online' || scanner.status === 'futronic',
-            scannerType: scanner.scannerType || 'unknown',
-            deviceInfo: scanner.deviceInfo || null,
-            lastUpdated: new Date().toISOString(),
-          });
-        }
-        break;
-      }
-
-      case 'authenticated': {
-        if (data.payload.status === 'success') {
-          setIsAuthenticated(true);
-          console.log('✅ WebSocket authenticated');
-        } else {
-          setError(data.payload.error || 'Authentication failed');
-        }
-        break;
-      }
-
-      // ✅ Handle error messages
-      case 'error': {
-        console.error('❌ Server error:', data.payload);
-        const errorMsg = data.payload.error || 'An error occurred';
-        setError(errorMsg);
-        setIsCapturing(false);
-        if (errorMsg.includes('scanner') || errorMsg.includes('device')) {
-          setScannerStatus(prev => ({
-            ...prev,
-            status: 'error',
-            deviceConnected: false,
-          }));
-        }
-        break;
-      }
-
-      case 'capture_started': {
-        console.log('📸 Capture started');
-        setIsCapturing(true);
-        setCaptureProgress(0);
-        setError(null);
-        break;
-      }
-
-      case 'capture_progress': {
-        setCaptureProgress(data.payload.progress);
-        setLiveData(data.payload);
-        if (data.payload.imageData) {
+    const handleMessage = (data) => {
+      console.log('📨 WebSocket message received:', data.type);
+      
+      switch (data.type) {
+        case 'connected':
+          setIsConnected(true);
+          setError(null);
+          if (data.payload?.scanner) {
+            setScannerStatus(data.payload.scanner);
+            wsManager.scannerStatus = data.payload.scanner;
+          }
+          // ✅ Send authentication if token exists
+          if (token && wsManager.ws?.readyState === WebSocket.OPEN) {
+            wsManager.sendMessage({
+              type: 'authenticate',
+              payload: { token }
+            });
+          }
+          break;
+          
+        case 'disconnected':
+          setIsConnected(false);
+          break;
+          
+        case 'authenticated':
+          setIsAuthenticated(data.payload?.status === 'success');
+          if (data.payload?.status !== 'success') {
+            setError(data.payload?.error || 'Authentication failed');
+          }
+          break;
+          
+        case 'capture_started':
+          setIsCapturing(true);
+          setCaptureProgress(0);
+          setError(null);
+          break;
+          
+        case 'capture_progress':
+          setCaptureProgress(data.payload?.progress || 0);
+          setLiveData(data.payload);
+          break;
+          
+        case 'capture_complete':
+          setIsCapturing(false);
+          setCaptureProgress(100);
           setFingerprintData(data.payload);
-        }
-        break;
+          break;
+          
+        case 'capture_error':
+          setIsCapturing(false);
+          setError(data.payload?.error || 'Capture failed');
+          break;
+          
+        case 'capture_stopped':
+          setIsCapturing(false);
+          break;
+          
+        case 'error':
+          setError(data.payload?.error || 'An error occurred');
+          break;
+          
+        default:
+          break;
       }
+    };
 
-      case 'capture_complete': {
-        console.log('📸 Capture complete');
-        setIsCapturing(false);
-        setCaptureProgress(100);
-        setFingerprintData(data.payload);
-        setError(null);
-        break;
-      }
+    // ✅ Subscribe to singleton manager
+    const unsubscribe = wsManager.subscribe(handleMessage);
 
-      case 'capture_error': {
-        console.error('❌ Capture error:', data.payload);
-        setIsCapturing(false);
-        setError(data.payload.error || 'Capture failed');
-        break;
-      }
-
-      case 'capture_stopped': {
-        console.log('⏹️ Capture stopped');
-        setIsCapturing(false);
-        break;
-      }
-
-      default: {
-        console.log('❓ Unknown message type:', data.type);
-        break;
-      }
+    // ✅ Ensure connection exists
+    if (!wsManager.isConnected && !wsManager.isConnecting) {
+      wsManager.connect();
     }
-  }, []);
+
+    // ✅ Cleanup on unmount
+    return () => {
+      console.log('🔌 Unsubscribing from WebSocket');
+      unsubscribe();
+      setConnectionCount(prev => prev - 1);
+    };
+  }, [token]);
 
   // ============================================
-  // Connect to WebSocket
+  // ✅ API Functions
   // ============================================
-  const connect = useCallback(() => {
-    if (isConnecting.current) {
-      console.log('⚠️ Connection already in progress, skipping...');
+  const startCapture = useCallback((fingerType = 'right_thumb') => {
+    if (!wsManager.isConnected) {
+      setError('Scanner not connected');
       return;
     }
-    cleanup();
-    if (!isMounted.current) return;
-    isConnecting.current = true;
+    wsManager.sendMessage({
+      type: 'start_capture',
+      payload: { fingerType, timeout: 30000 }
+    });
+  }, []);
 
-    try {
-      const wsUrl = 'ws://localhost:8000/ws/fingerprint';
-      console.log('🔗 Connecting to WebSocket:', wsUrl);
-
-      wsRef.current = new WebSocket(wsUrl);
-      wsRef.current.binaryType = 'arraybuffer';
-
-      wsRef.current.onopen = () => {
-        if (!isMounted.current) return;
-        console.log('✅ WebSocket OPENED');
-        setIsConnected(true);
-        setError(null);
-        reconnectAttempts.current = 0;
-        isConnecting.current = false;
-
-        if (token) {
-          console.log('🔐 Sending authentication...');
-          wsRef.current.send(
-            JSON.stringify({
-              type: 'authenticate',
-              payload: { token },
-            })
-          );
-        }
-      };
-
-      wsRef.current.onmessage = (event) => {
-        if (!isMounted.current) return;
-        try {
-          const data = JSON.parse(event.data);
-          handleWebSocketMessage(data);
-        } catch (error) {
-          console.error('❌ WebSocket parse error:', error);
-        }
-      };
-
-      wsRef.current.onerror = (event) => {
-        if (!isMounted.current) return;
-        console.error('❌ WebSocket ERROR:', event);
-        isConnecting.current = false;
-        if (!isConnected) {
-          setError('Connection error. Please check server.');
-        }
-      };
-
-      wsRef.current.onclose = (event) => {
-        if (!isMounted.current) return;
-        console.log('🔌 WebSocket CLOSED:', event.code, event.reason || 'No reason');
-        setIsConnected(false);
-        setIsAuthenticated(false);
-        setIsCapturing(false);
-        isConnecting.current = false;
-
-        setScannerStatus((prev) => ({
-          ...prev,
-          status: 'offline',
-          deviceConnected: false,
-          lastUpdated: new Date().toISOString(),
-        }));
-
-        if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
-          reconnectAttempts.current++;
-          const delay = Math.min(1000 * reconnectAttempts.current, 5000);
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current})`);
-          reconnectTimeoutRef.current = setTimeout(() => {
-            if (isMounted.current) {
-              connect();
-            }
-          }, delay);
-        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-          console.log('❌ Max reconnect attempts reached');
-          setError('Could not connect to scanner. Please refresh the page.');
-        }
-      };
-    } catch (error) {
-      console.error('❌ WebSocket connection error:', error);
-      setError('Failed to connect to WebSocket server');
-      isConnecting.current = false;
-    }
-  }, [token, handleWebSocketMessage, cleanup]);
-
-  // ============================================
-  // Start Capture – with status checks
-  // ============================================
-  const startCapture = useCallback(
-    (fingerType = 'right_thumb') => {
-      console.log('▶️ startCapture:', fingerType);
-      console.log('📟 Current scanner status:', scannerStatus);
-
-      if (!isConnected) {
-        setError('Scanner not connected');
-        return;
-      }
-
-      // ✅ Check if scanner is ready
-      if (!scannerStatus.deviceConnected) {
-        setError('Scanner is not ready. Please wait...');
-        return;
-      }
-
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: 'start_capture',
-            payload: { fingerType, timeout: 30000 },
-          })
-        );
-      } else {
-        setError('WebSocket is not open');
-      }
-    },
-    [isConnected, scannerStatus]
-  );
-
-  // ============================================
-  // Stop Capture
-  // ============================================
   const stopCapture = useCallback(() => {
-    if (isConnected && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'stop_capture' }));
-    }
-  }, [isConnected]);
+    wsManager.sendMessage({ type: 'stop_capture' });
+  }, []);
 
-  // ============================================
-  // Helper Functions
-  // ============================================
-  const getScannerStatus = useCallback(() => scannerStatus, [scannerStatus]);
-  const isScannerReady = useCallback(() => {
-    return isConnected && scannerStatus.isReady && scannerStatus.deviceConnected;
-  }, [isConnected, scannerStatus]);
+  const resetFingerprintData = useCallback(() => {
+    setFingerprintData(null);
+    setLiveData(null);
+    setCaptureProgress(0);
+    setIsCapturing(false);
+  }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
-  // ============================================
-  // Connect on Mount – ONLY ONCE
-  // ============================================
-  useEffect(() => {
-    isMounted.current = true;
-    console.log('🔄 useFingerprintWebSocket: Initializing...');
-    connect();
-
-    return () => {
-      isMounted.current = false;
-      isConnecting.current = false;
-      cleanup();
-    };
+  const connect = useCallback(() => {
+    if (!wsManager.isConnected && !wsManager.isConnecting) {
+      wsManager.connect();
+    }
   }, []);
 
-  // ============================================
-  // Return API
-  // ============================================
+  const disconnect = useCallback(() => {
+    wsManager.disconnect();
+  }, []);
+
+  const isScannerReady = useCallback(() => {
+    return wsManager.isConnected && (scannerStatus.isReady || scannerStatus.isSimulated);
+  }, [scannerStatus]);
+
   return {
     isConnected,
     isAuthenticated,
     error,
-    connect,
-    reconnect: connect,
     scannerStatus,
-    getScannerStatus,
     isScannerReady,
     isCapturing,
     captureProgress,
@@ -328,7 +308,11 @@ export const useFingerprintWebSocket = () => {
     liveData,
     startCapture,
     stopCapture,
+    resetFingerprintData,
     clearError,
+    connect,
+    disconnect,
+    connectionCount, // ✅ For debugging
   };
 };
 
