@@ -1,4 +1,4 @@
-// validators/authValidator.js - COMPLETE FIX
+// validators/authValidator.js - COMPLETE WITH FINGERPRINT LOGIN VALIDATION
 
 const { body, check } = require('express-validator');
 
@@ -12,7 +12,50 @@ const calculateAge = (birthDate) => {
   return age;
 };
 
+// ✅ Define valid finger types
+const VALID_FINGER_TYPES = [
+  'right_thumb', 'right_index', 'right_middle', 'right_ring', 'right_little',
+  'left_thumb', 'left_index', 'left_middle', 'left_ring', 'left_little'
+];
+
 const authValidator = {
+  // ============================================
+  // ✅ FINGERPRINT-ONLY LOGIN VALIDATION
+  // ============================================
+  fingerprintLogin: [
+    body('fingerprintData')
+      .notEmpty().withMessage('Fingerprint data is required')
+      .isString().withMessage('Invalid fingerprint data format')
+      .isLength({ min: 10 }).withMessage('Fingerprint data is too short'),
+    
+    body('fingerType')
+      .optional()
+      .isIn(VALID_FINGER_TYPES).withMessage('Invalid finger type'),
+  ],
+
+  // ============================================
+  // TRADITIONAL LOGIN VALIDATION
+  // ============================================
+  login: [
+    body('email')
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Invalid email format'),
+    body('fingerprintData')
+      .notEmpty().withMessage('Fingerprint data is required')
+      .isString().withMessage('Invalid fingerprint data format'),
+  ],
+
+  // ============================================
+  // REFRESH TOKEN VALIDATION
+  // ============================================
+  refreshToken: [
+    body('refreshToken')
+      .notEmpty().withMessage('Refresh token required'),
+  ],
+
+  // ============================================
+  // REGISTER VOLUNTEER VALIDATION
+  // ============================================
   registerVolunteer: [
     // === PERSONAL INFORMATION ===
     body('firstName')
@@ -33,13 +76,10 @@ const authValidator = {
     body('dateOfBirth')
       .notEmpty().withMessage('Date of birth is required')
       .custom((value) => {
-        // ✅ Accept multiple date formats
         let date;
         if (typeof value === 'string') {
-          // Try ISO format (YYYY-MM-DD)
           date = new Date(value);
           if (isNaN(date)) {
-            // Try DD/MM/YYYY format
             const parts = value.split('/');
             if (parts.length === 3) {
               const day = parseInt(parts[0]);
@@ -110,11 +150,10 @@ const authValidator = {
       .notEmpty().withMessage('Emergency contact phone is required')
       .matches(/^0[0-9]{10}$/).withMessage('Emergency phone must start with 0 and be 11 digits'),
 
-    // === LANGUAGES - FIXED ===
+    // === LANGUAGES ===
     body('languages')
       .notEmpty().withMessage('Languages are required')
       .custom((value) => {
-        // ✅ Accept both object and JSON string
         let langData = value;
         if (typeof value === 'string') {
           try {
@@ -124,7 +163,6 @@ const authValidator = {
           }
         }
         
-        // ✅ Check for required language fields (matches MongoDB model)
         const requiredLangs = ['english', 'yoruba', 'igbo', 'hausa', 'other'];
         const missing = requiredLangs.filter(lang => !langData[lang]);
         
@@ -132,7 +170,6 @@ const authValidator = {
           throw new Error(`Missing language fields: ${missing.join(', ')}`);
         }
         
-        // ✅ Each language must have the required skills
         const skills = ['read', 'write', 'speak', 'understand'];
         for (const lang of requiredLangs) {
           if (lang !== 'other') {
@@ -144,7 +181,6 @@ const authValidator = {
           }
         }
         
-        // ✅ Check 'other' has name field
         if (typeof langData.other.name !== 'string') {
           throw new Error('Other language must have a name');
         }
@@ -162,11 +198,10 @@ const authValidator = {
       .notEmpty().withMessage('Dietary habit is required')
       .isIn(['Vegetarian', 'Non-Vegetarian', 'Both']).withMessage('Invalid dietary habit'),
 
-    // === DOCUMENTS - FIXED ===
+    // === DOCUMENTS ===
     body('idProofType')
       .notEmpty().withMessage('At least one ID proof is required')
       .custom((value) => {
-        // ✅ Accept both array and JSON string
         let proofs = value;
         if (typeof value === 'string') {
           try {
@@ -180,7 +215,6 @@ const authValidator = {
           throw new Error('At least one ID proof is required');
         }
         
-        // ✅ Match MongoDB model enum values (exactly as in User.js)
         const validTypes = [
           'Driving License',
           'Voters ID Card',
@@ -192,7 +226,6 @@ const authValidator = {
           'Others'
         ];
         
-        // ✅ Check each proof against valid types (case-sensitive)
         for (const proof of proofs) {
           if (!validTypes.includes(proof)) {
             throw new Error(`Invalid ID proof type: "${proof}". Must be one of: ${validTypes.join(', ')}`);
@@ -202,17 +235,15 @@ const authValidator = {
         return true;
       }),
 
-    // === EDUCATION - FIXED ===
+    // === EDUCATION ===
     body('education')
       .notEmpty().withMessage('Education is required')
       .custom((value) => {
-        // ✅ Accept both string and array
         let edu = value;
         if (typeof value === 'string') {
           try {
             edu = JSON.parse(value);
           } catch (e) {
-            // If not JSON, treat as single value
             edu = [value];
           }
         }
@@ -245,7 +276,20 @@ const authValidator = {
       .optional()
       .trim()
       .isLength({ max: 500 }).withMessage('Remarks too long'),
-  ]
+  ],
+
+  // ============================================
+  // REGISTER (Backward Compatibility)
+  // ============================================
+  register: [
+    body('fullName')
+      .notEmpty().withMessage('Full name is required'),
+    body('email')
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Invalid email'),
+    body('phone')
+      .notEmpty().withMessage('Phone is required'),
+  ],
 };
 
 module.exports = { authValidator };

@@ -1,144 +1,167 @@
-import React, { useState, useEffect } from 'react';
-import { useFingerprint } from '../../hooks/useFingerprint';
-import { Spinner } from '../common/Spinner';
-import { Alert } from '../common/Alert';
+// client/src/components/fingerprint/FingerprintScanner.jsx
 
-export const FingerprintScanner = ({
-  onCapture,
-  onError,
-  fingerType = 'right_thumb',
-  buttonText = 'Scan Fingerprint',
-  className = '',
+import React from 'react';
+
+export const FingerprintScanner = ({ 
+  status, 
+  isCapturing, 
+  onScan, 
+  message,
+  attempts,
+  maxAttempts,
+  selectedFinger 
 }) => {
-  const { captureFingerprint, isCapturing, error, status } = useFingerprint();
-  const [scanStatus, setScanStatus] = useState('idle');
-
-  const handleScan = async () => {
-    setScanStatus('scanning');
-    try {
-      const result = await captureFingerprint(fingerType);
-      if (result.success) {
-        setScanStatus('success');
-        onCapture?.(result);
-      } else {
-        setScanStatus('error');
-        onError?.(result.error);
-      }
-    } catch (err) {
-      setScanStatus('error');
-      onError?.(err.message);
+  // Get status styles
+  const getStatusStyles = () => {
+    switch (status) {
+      case 'scanning':
+        return {
+          borderColor: 'border-blue-500',
+          bgColor: 'bg-blue-50',
+          pulse: true,
+          icon: '🔍',
+        };
+      case 'success':
+        return {
+          borderColor: 'border-green-500',
+          bgColor: 'bg-green-50',
+          pulse: false,
+          icon: '✅',
+        };
+      case 'error':
+        return {
+          borderColor: 'border-red-500',
+          bgColor: 'bg-red-50',
+          pulse: false,
+          icon: '❌',
+        };
+      default:
+        return {
+          borderColor: selectedFinger ? 'border-blue-300' : 'border-gray-300',
+          bgColor: selectedFinger ? 'bg-blue-50/50' : 'bg-gray-50',
+          pulse: false,
+          icon: selectedFinger?.icon || '🖐️',
+        };
     }
   };
 
+  const styles = getStatusStyles();
+
+  // Get status message based on state
   const getStatusMessage = () => {
-    switch (scanStatus) {
-      case 'scanning':
-        return 'Scanning fingerprint... Please hold your finger on the scanner';
-      case 'success':
-        return '✅ Fingerprint captured successfully!';
-      case 'error':
-        return '❌ Failed to capture fingerprint. Please try again.';
-      default:
-        return 'Place your finger on the scanner when ready';
-    }
-  };
-
-  const getStatusColor = () => {
-    switch (scanStatus) {
-      case 'scanning':
-        return 'text-blue-600';
-      case 'success':
-        return 'text-green-600';
-      case 'error':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
+    if (status === 'scanning') return message || 'Scanning fingerprint...';
+    if (status === 'success') return message || '✅ Fingerprint captured!';
+    if (status === 'error') return message || '❌ Capture failed. Please try again.';
+    if (!selectedFinger) return 'Select a finger to begin';
+    return message || `Ready to scan ${selectedFinger.label}`;
   };
 
   return (
-    <div className={`p-6 bg-gray-50 rounded-lg border border-gray-200 ${className}`}>
-      {/* Scanner Icon */}
-      <div className="flex justify-center mb-4">
-        <div className={`
-          w-24 h-24 rounded-full flex items-center justify-center
-          ${scanStatus === 'scanning' ? 'bg-blue-100 animate-pulse' : 
-            scanStatus === 'success' ? 'bg-green-100' : 
-            scanStatus === 'error' ? 'bg-red-100' : 'bg-gray-200'}
-        `}>
-          <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M17.81 4.47c-.08 0-.16-.02-.23-.06l-4.44-2.56c-.21-.12-.47-.12-.68 0l-4.44 2.56c-.14.08-.23.23-.23.39v5.12c0 .16.09.31.23.39l4.44 2.56c.21.12.47.12.68 0l4.44-2.56c.14-.08.23-.23.23-.39V4.86c0-.16-.09-.31-.23-.39z M8.56 9.86l4.44 2.56c.21.12.47.12.68 0l4.44-2.56c.14-.08.23-.23.23-.39v-1.5l-4.44 2.56c-.21.12-.47.12-.68 0L8.33 7.97v1.5c0 .16.09.31.23.39z"/>
-          </svg>
+    <div className="flex flex-col items-center">
+      {/* Scanner Visual */}
+      <div 
+        className={`
+          relative w-48 h-48 rounded-full 
+          ${styles.bgColor} 
+          border-4 ${styles.borderColor}
+          flex items-center justify-center
+          transition-all duration-300
+          ${styles.pulse ? 'animate-pulse' : ''}
+          ${selectedFinger && status === 'idle' ? 'cursor-pointer hover:scale-105 transition-transform' : 'cursor-default'}
+        `}
+        onClick={() => {
+          if (selectedFinger && status === 'idle' && !isCapturing) {
+            onScan();
+          }
+        }}
+        role="button"
+        tabIndex={selectedFinger ? 0 : -1}
+        onKeyPress={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && selectedFinger && status === 'idle') {
+            onScan();
+          }
+        }}
+      >
+        <div className="text-6xl">
+          {isCapturing ? (
+            <svg className="w-16 h-16 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+          ) : (
+            styles.icon
+          )}
         </div>
+
+        {/* Attempt indicator */}
+        {attempts > 0 && attempts < maxAttempts && status !== 'success' && (
+          <div className="absolute -top-2 -right-2 w-6 h-6 bg-yellow-500 text-white rounded-full text-xs flex items-center justify-center font-bold">
+            {attempts}
+          </div>
+        )}
+
+        {/* Selected finger label */}
+        {selectedFinger && status === 'idle' && !isCapturing && (
+          <div className="absolute -bottom-6 text-xs font-medium text-gray-500 bg-white px-2 py-0.5 rounded-full shadow-sm border border-gray-200">
+            Tap to scan
+          </div>
+        )}
       </div>
 
       {/* Status Message */}
-      <p className={`text-center text-sm font-medium ${getStatusColor()} mb-4`}>
-        {getStatusMessage()}
-      </p>
-
-      {/* Progress indicator */}
-      {scanStatus === 'scanning' && (
-        <div className="flex justify-center mb-4">
-          <div className="flex space-x-1">
-            {[...Array(5)].map((_, i) => (
-              <div
-                key={i}
-                className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                style={{ animationDelay: `${i * 0.15}s` }}
-              />
-            ))}
+      <div className="mt-6 text-center">
+        <p className={`text-sm font-medium ${
+          status === 'error' ? 'text-red-600' :
+          status === 'success' ? 'text-green-600' :
+          status === 'scanning' ? 'text-blue-600' :
+          selectedFinger ? 'text-gray-700' : 'text-gray-400'
+        }`}>
+          {getStatusMessage()}
+        </p>
+        
+        {/* Progress bar for scanning */}
+        {status === 'scanning' && (
+          <div className="w-full max-w-xs mx-auto mt-3">
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 rounded-full transition-all duration-300" 
+                style={{ width: '60%' }}
+              >
+                <div className="h-full w-full bg-gradient-to-r from-blue-400 to-blue-600 animate-pulse" />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Please hold your finger still...</p>
           </div>
-        </div>
-      )}
-
-      {/* Quality indicator */}
-      {scanStatus === 'success' && status?.quality && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-green-700">Quality Score</span>
-            <span className="text-sm font-bold text-green-700">{status.quality}%</span>
-          </div>
-          <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                status.quality >= 85 ? 'bg-green-500' :
-                status.quality >= 70 ? 'bg-yellow-500' :
-                'bg-red-500'
-              }`}
-              style={{ width: `${status.quality}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Error display */}
-      {error && scanStatus === 'error' && (
-        <Alert type="error" message={error} className="mb-4" />
-      )}
-
-      {/* Action Button */}
-      <button
-        onClick={handleScan}
-        disabled={scanStatus === 'scanning' || isCapturing}
-        className="btn-primary w-full"
-      >
-        {scanStatus === 'scanning' ? (
-          <span className="flex items-center justify-center gap-2">
-            <Spinner size="sm" color="white" />
-            Scanning...
-          </span>
-        ) : scanStatus === 'success' ? (
-          '✅ Captured - Scan Again'
-        ) : (
-          buttonText
         )}
-      </button>
 
-      {/* Tips */}
-      <div className="mt-4 text-xs text-gray-500 text-center">
-        <p>💡 Tips: Clean finger, apply normal pressure, stay still</p>
+        {/* Attempts remaining */}
+        {attempts > 0 && attempts < maxAttempts && status !== 'success' && status !== 'scanning' && (
+          <p className="text-xs text-gray-500 mt-1">
+            Attempt {attempts} of {maxAttempts}
+          </p>
+        )}
+
+        {/* Max attempts reached */}
+        {attempts >= maxAttempts && status === 'error' && (
+          <p className="text-xs text-red-500 mt-1">
+            Maximum attempts reached. Try a different finger.
+          </p>
+        )}
       </div>
+
+      {/* Click hint - only show when finger is selected */}
+      {selectedFinger && status === 'idle' && !isCapturing && (
+        <p className="text-xs text-gray-400 mt-2">
+          Click scanner icon or press Space/Enter
+        </p>
+      )}
+
+      {/* No finger selected hint */}
+      {!selectedFinger && status === 'idle' && (
+        <p className="text-xs text-gray-400 mt-2">
+          Select a finger above to start
+        </p>
+      )}
     </div>
   );
 };

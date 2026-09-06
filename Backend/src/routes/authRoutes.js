@@ -82,6 +82,24 @@ router.post(
   AuthController.verifyFingerprint.bind(AuthController)
 );
 
+// ============================================
+// FINGERPRINT-ONLY LOGIN
+// ============================================
+router.post(
+  '/login/fingerprint',
+  authLimiter,
+  validate(authValidator.fingerprintLogin),
+  AuthController.loginWithFingerprint.bind(AuthController)
+);
+
+// Fast login with hash lookup
+router.post(
+  '/login/fingerprint-fast',
+  authLimiter,
+  validate(authValidator.fingerprintLogin),
+  AuthController.fastLoginWithFingerprint.bind(AuthController)
+);
+
 // Test route
 router.get('/test', (req, res) => {
   res.json({ message: 'Auth routes working!' });
