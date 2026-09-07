@@ -1,18 +1,18 @@
-// client/src/pages/Register/Step2Biometrics.jsx - UPDATED WITH ERROR PROP
+// client/src/pages/Register/Step2Biometrics.jsx - WITH PROGRESS
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { FiveFingerCapture } from '../../components/fingerprint/FiveFingerCapture';
-import { QualityIndicator } from '../../components/fingerprint/QualityIndicator';
 import { Button } from '../../components/common/Button';
 import { Card } from '../../components/common/Card';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
+import { useAuth } from '../../hooks/useAuth';
 
 const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propError }) => {
+  const { uploadProgress } = useAuth();
   const [fingers, setFingers] = useState({});
   const [webcamImage, setWebcamImage] = useState(null);
-  const [isCapturing, setIsCapturing] = useState(false);
   const [captureProgress, setCaptureProgress] = useState(0);
   const [capturedCount, setCapturedCount] = useState(0);
   const [isWebcamReady, setIsWebcamReady] = useState(false);
@@ -21,6 +21,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
   const [captureStatus, setCaptureStatus] = useState('Ready to capture biometrics');
   const [fingerError, setFingerError] = useState(null);
   const [submitError, setSubmitError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const webcamRef = useRef(null);
 
@@ -37,8 +38,18 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     if (propError) {
       setSubmitError(propError);
       setCaptureStatus(`❌ ${propError}`);
+      setIsSubmitting(false);
     }
   }, [propError]);
+
+  // ✅ Update progress from AuthContext
+  useEffect(() => {
+    if (uploadProgress > 0 && uploadProgress < 100) {
+      setCaptureStatus(`⏳ Uploading... ${uploadProgress}%`);
+    } else if (uploadProgress === 100) {
+      setCaptureStatus('✅ Upload complete!');
+    }
+  }, [uploadProgress]);
 
   // ✅ Handle fingerprint progress updates
   const handleFingerprintProgress = useCallback((data) => {
@@ -47,7 +58,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     setCapturedCount(data.capturedCount || 0);
     setFingers(data.capturedFingers || {});
     setCaptureStatus(data.status || 'Capturing fingerprints...');
-    setSubmitError(null); // Clear any previous submit errors
+    setSubmitError(null);
     
     if (data.capturedCount === 5) {
       setCaptureStatus('✅ All fingerprints captured!');
@@ -153,7 +164,8 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     }
 
     setSubmitError(null);
-    setCaptureStatus('⏳ Submitting registration data...');
+    setIsSubmitting(true);
+    setCaptureStatus('⏳ Preparing upload...');
     console.log('🔐 Submitting biometrics...');
 
     const submissionData = {
@@ -161,25 +173,14 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
       profileImage: webcamImage,
     };
 
-    // ✅ Show progress in status
-    const progressInterval = setInterval(() => {
-      setCaptureStatus(prev => {
-        if (prev.includes('✅') || prev.includes('❌')) return prev;
-        const dots = prev.match(/\./g)?.length || 0;
-        const newDots = (dots % 3) + 1;
-        return `⏳ Submitting registration data${'.'.repeat(newDots)}`;
-      });
-    }, 500);
-
     try {
       await onSubmit(submissionData);
-      clearInterval(progressInterval);
       setCaptureStatus('✅ Registration completed!');
     } catch (error) {
-      clearInterval(progressInterval);
       const errorMsg = error.message || 'Registration failed';
       setSubmitError(errorMsg);
       setCaptureStatus(`❌ ${errorMsg}`);
+      setIsSubmitting(false);
       throw error;
     }
   }, [fingers, webcamImage, onSubmit, getSubmitValidation]);
@@ -194,6 +195,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     setFingerError(null);
     setWebcamError(null);
     setSubmitError(null);
+    setIsSubmitting(false);
   }, []);
 
   // ✅ Retry fingerprint capture
@@ -265,7 +267,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
               onComplete={handleFingerprintComplete}
               onProgress={handleFingerprintProgress}
               onError={handleFingerprintError}
-              disabled={isLoading}
+              disabled={isLoading || isSubmitting}
             />
 
             {/* Retry button if errors */}
@@ -274,6 +276,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                 variant="secondary" 
                 onClick={retryFingerprints}
                 className="w-full mt-3"
+                disabled={isSubmitting}
               >
                 Retry Fingerprint Capture
               </Button>
@@ -387,7 +390,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                   variant="secondary"
                   onClick={retakeWebcam}
                   className="flex-1"
-                  disabled={isLoading}
+                  disabled={isLoading || isSubmitting}
                 >
                   <span className="flex items-center justify-center gap-2">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -400,7 +403,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                 <Button
                   onClick={captureWebcam}
                   className="flex-1"
-                  disabled={!isWebcamReady || isLoading || isImageLoading}
+                  disabled={!isWebcamReady || isLoading || isImageLoading || isSubmitting}
                 >
                   {isImageLoading ? (
                     <span className="flex items-center justify-center gap-2">
@@ -467,6 +470,24 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                 </span>
               </div>
 
+              {/* Upload Progress */}
+              {isSubmitting && uploadProgress > 0 && uploadProgress < 100 && (
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm text-gray-600">Uploading:</span>
+                    <span className="text-sm font-medium text-blue-600">
+                      {uploadProgress}%
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Overall Status */}
               <div className="flex justify-between items-center pt-2 border-t border-gray-200">
                 <span className="text-sm text-gray-600">Overall Status:</span>
@@ -485,19 +506,19 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
               variant="secondary"
               onClick={onBack}
               className="flex-1"
-              disabled={isLoading}
+              disabled={isLoading || isSubmitting}
             >
               ← Back
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={!allFingersCaptured || !webcamImage || isLoading}
+              disabled={!allFingersCaptured || !webcamImage || isLoading || isSubmitting}
               className="flex-1"
             >
-              {isLoading ? (
+              {isLoading || isSubmitting ? (
                 <span className="flex items-center justify-center gap-2">
                   <Spinner size="sm" color="white" />
-                  Creating Account...
+                  {isSubmitting ? `Uploading ${uploadProgress}%` : 'Creating Account...'}
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
@@ -511,7 +532,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
           </div>
 
           {/* Validation Message */}
-          {(!allFingersCaptured || !webcamImage) && !isLoading && !submitError && (
+          {(!allFingersCaptured || !webcamImage) && !isLoading && !isSubmitting && !submitError && (
             <div className="text-xs text-yellow-600 text-center">
               {!allFingersCaptured && !webcamImage && '⚠️ Please capture all 5 fingerprints and a profile photo'}
               {!allFingersCaptured && webcamImage && `⚠️ Please capture ${5 - capturedCount} more fingerprint(s)`}
@@ -520,7 +541,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
           )}
 
           {/* Reset button */}
-          {(allFingersCaptured || webcamImage) && !isLoading && (
+          {(allFingersCaptured || webcamImage) && !isLoading && !isSubmitting && (
             <Button
               variant="ghost"
               onClick={resetAll}
