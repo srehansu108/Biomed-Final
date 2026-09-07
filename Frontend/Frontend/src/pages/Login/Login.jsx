@@ -1,4 +1,4 @@
-// client/src/pages/Login/FingerprintLogin.jsx
+// client/src/pages/Login/FingerprintLogin.jsx - FIXED: real scanner capture for login
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,7 +10,6 @@ import { Alert } from '../../components/common/Alert';
 import { QualityIndicator } from '../../components/fingerprint/QualityIndicator';
 import { FingerprintScanner } from '../../components/fingerprint/FingerprintScanner';
 import { FingerSelector } from '../../components/fingerprint/FingerSelector';
-import { useFingerprint } from '../../hooks/useFingerprint';
 import axiosInstance from '../../api/axiosConfig';
 
 // ✅ Finger types with display names and icons
@@ -30,25 +29,37 @@ const FINGER_TYPES = [
 const FingerprintLogin = () => {
   const navigate = useNavigate();
   const { loginWithFingerprint: authLoginWithFingerprint, isAuthenticated } = useAuth();
-  const { captureFingerprint, isCapturing, status, error: captureError } = useFingerprint();
-  
+
+  // ✅ FIX: capture now comes from the WebSocket hook — the same path enrollment
+  // (FiveFingerCapture) uses to talk to the real scanner. The old code used
+  // useFingerprint().captureFingerprint(), whose "real scanner" branch was commented
+  // out and unconditionally fell back to simulateCapture() — i.e. login always sent
+  // random fabricated minutiae that could never match anything enrolled in the DB.
+  const {
+    isConnected: wsConnected,
+    scannerStatus,
+    isScannerReady,
+    isCapturing: wsIsCapturing,
+    captureProgress,
+    fingerprintData,
+    error: wsError,
+    startCapture,
+    stopCapture,
+    resetFingerprintData,
+    clearError,
+  } = useFingerprintWebSocket();
+
   // State
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [fingerprintData, setFingerprintData] = useState(null);
   const [scanStatus, setScanStatus] = useState('idle');
   const [attempts, setAttempts] = useState(0);
   const [scanMessage, setScanMessage] = useState('Select a finger to begin');
   const [matchInfo, setMatchInfo] = useState(null);
   const [selectedFinger, setSelectedFinger] = useState(null);
   const [selectedFingerType, setSelectedFingerType] = useState(null);
-
-  // WebSocket for real-time scanner status
-  const {
-    isConnected: wsConnected,
-    scannerStatus,
-    isScannerReady,
-  } = useFingerprintWebSocket();
+  // Which finger we're currently waiting on real scanner data for
+  const [awaitingFinger, setAwaitingFinger] = useState(null);
 
   // ✅ Redirect if already authenticated
   useEffect(() => {
@@ -59,6 +70,7 @@ const FingerprintLogin = () => {
 
   // ✅ Handle finger selection
   const handleFingerSelect = (finger) => {
+    if (wsIsCapturing) return;
     setSelectedFinger(finger);
     setSelectedFingerType(finger.id);
     setScanStatus('idle');
@@ -68,71 +80,102 @@ const FingerprintLogin = () => {
     setScanMessage(`Selected: ${finger.label}. Click "Scan" to start.`);
   };
 
-  // ✅ Handle manual scan
-  const handleManualScan = async () => {
+  // ✅ React to real fingerprint data arriving over the WebSocket
+  useEffect(() => {
+    if (!fingerprintData || !awaitingFinger) return;
+    // Ignore stray/late data for a finger we're no longer waiting on
+    if (fingerprintData.fingerType && fingerprintData.fingerType !== awaitingFinger) return;
+
+    const templateData =
+      fingerprintData.data || fingerprintData.template || fingerprintData.templateData;
+
+    if (!templateData) {
+      setScanStatus('error');
+      setError('No fingerprint data received from scanner.');
+      setScanMessage('❌ No fingerprint data received. Please try again.');
+      setAwaitingFinger(null);
+      return;
+    }
+
+    setScanStatus('success');
+    setScanMessage(
+      `✅ ${selectedFinger?.label || awaitingFinger} captured! Quality: ${Math.round(
+        fingerprintData.quality || 0
+      )}%`
+    );
+    setAwaitingFinger(null);
+    handleLogin(templateData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fingerprintData, awaitingFinger]);
+
+  // ✅ React to WebSocket-reported capture errors
+  useEffect(() => {
+    if (!wsError || !awaitingFinger) return;
+
+    setScanStatus('error');
+    setError(wsError);
+    setScanMessage(`❌ ${wsError}`);
+    setAwaitingFinger(null);
+
+    const newAttempts = attempts + 1;
+    setAttempts(newAttempts);
+
+    if (newAttempts < 3) {
+      setTimeout(() => {
+        setScanStatus('idle');
+        setScanMessage(`Please try again with ${selectedFinger?.label} (Attempt ${newAttempts + 1}/3)`);
+        clearError();
+      }, 2000);
+    } else {
+      setScanMessage(`❌ Too many failed attempts with ${selectedFinger?.label}. Try a different finger.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsError, awaitingFinger]);
+
+  // ✅ Handle manual scan — starts a REAL capture over the WebSocket
+  const handleManualScan = () => {
     if (!selectedFinger) {
       setError('Please select a finger first');
       return;
     }
-    
-    if (isCapturing || isLoading) return;
+
+    if (wsIsCapturing || isLoading) return;
+
+    if (!wsConnected) {
+      setError('Scanner not connected. Please check connection.');
+      return;
+    }
 
     setScanStatus('scanning');
     setError('');
     setMatchInfo(null);
     setScanMessage(`🔍 Scanning ${selectedFinger.label}...`);
 
-    try {
-      const result = await captureFingerprint(selectedFinger.id);
-      
-      if (result.success) {
-        setFingerprintData(result.data);
-        setScanStatus('success');
-        setScanMessage(`✅ ${selectedFinger.label} captured! Quality: ${result.quality}%`);
-        
-        // ✅ Auto-login after capture
-        await handleLogin(result.data);
-      } else {
-        setScanStatus('error');
-        setError(result.error || 'Failed to capture fingerprint');
-        setScanMessage(`❌ Failed to capture ${selectedFinger.label}. Please try again.`);
-        
-        // ✅ Retry
-        const newAttempts = attempts + 1;
-        setAttempts(newAttempts);
-        
-        if (newAttempts < 3) {
-          setTimeout(() => {
-            setScanStatus('idle');
-            setScanMessage(`Please try again with ${selectedFinger.label} (Attempt ${newAttempts + 1}/3)`);
-          }, 2000);
-        } else {
-          setScanMessage(`❌ Too many failed attempts with ${selectedFinger.label}. Try a different finger.`);
-        }
-      }
-    } catch (err) {
-      setScanStatus('error');
-      setError(err.message || 'An error occurred during fingerprint capture');
-      setScanMessage('❌ Error: ' + err.message);
-    }
+    resetFingerprintData();
+    clearError();
+    setAwaitingFinger(selectedFingerType);
+    startCapture(selectedFingerType);
   };
 
-  // ✅ Handle login with captured fingerprint
+  const handleStopScan = () => {
+    stopCapture();
+    setAwaitingFinger(null);
+    setScanStatus('idle');
+    setScanMessage('Scan cancelled.');
+  };
+
+  // ✅ Handle login with the captured (real) fingerprint template
   const handleLogin = async (fingerprint) => {
     setIsLoading(true);
     setError('');
     setScanMessage('🔐 Verifying fingerprint...');
 
     try {
-      console.log('🔑 Attempting fingerprint-only login...');
-      console.log(`🖐️  Using finger: ${selectedFinger?.label || 'Unknown'}`);
-      
-      // ✅ Send fingerprint data with selected finger type
       const response = await loginWithFingerprintAPI(fingerprint, selectedFingerType);
-      
+
       if (response.success) {
         const { user, match } = response.data;
-        
+
         setMatchInfo({
           user: `${user.firstName} ${user.lastName}`,
           fingerType: match.fingerType,
@@ -140,12 +183,12 @@ const FingerprintLogin = () => {
           displayName: FINGER_TYPES.find(f => f.id === match.fingerType)?.label || match.fingerType,
           isPreferredMatch: match.isPreferredMatch
         });
-        
+
         setScanMessage(`✅ Welcome ${user.firstName}!`);
-        
+
         // ✅ Store user data in auth context
         authLoginWithFingerprint(response.data);
-        
+
         // ✅ Navigate to dashboard after brief delay
         setTimeout(() => {
           navigate('/dashboard');
@@ -216,6 +259,10 @@ const FingerprintLogin = () => {
   };
 
   const scannerStatusDisplay = getScannerStatusDisplay();
+  // ✅ FIX: isScannerReady from the hook is a function (useCallback), not a boolean —
+  // `!isScannerReady` was always false, so the button was never actually disabled by
+  // scanner-not-ready state. Call it.
+  const scannerReady = isScannerReady();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -224,7 +271,7 @@ const FingerprintLogin = () => {
         <div className="text-center mb-6">
           <div className="w-20 h-20 bg-biomed-green rounded-2xl flex items-center justify-center mx-auto mb-3">
             <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" />
             </svg>
           </div>
@@ -266,7 +313,7 @@ const FingerprintLogin = () => {
             fingers={FINGER_TYPES}
             selectedFinger={selectedFinger}
             onSelect={handleFingerSelect}
-            disabled={isCapturing || isLoading}
+            disabled={wsIsCapturing || isLoading}
           />
         </div>
 
@@ -291,7 +338,7 @@ const FingerprintLogin = () => {
         <div className="mb-6">
           <FingerprintScanner
             status={scanStatus}
-            isCapturing={isCapturing}
+            isCapturing={wsIsCapturing}
             onScan={handleManualScan}
             message={scanMessage}
             attempts={attempts}
@@ -301,16 +348,16 @@ const FingerprintLogin = () => {
         </div>
 
         {/* Quality Indicator */}
-        {scanStatus === 'success' && status?.quality && (
+        {scanStatus === 'success' && fingerprintData?.quality != null && (
           <div className="mb-4">
-            <QualityIndicator quality={status.quality} />
+            <QualityIndicator quality={fingerprintData.quality} />
           </div>
         )}
 
         {/* Match Info */}
         {matchInfo && (
           <div className={`rounded-lg p-4 mb-4 ${
-            matchInfo.isPreferredMatch !== false 
+            matchInfo.isPreferredMatch !== false
               ? 'bg-green-50 border border-green-200'
               : 'bg-yellow-50 border border-yellow-200'
           }`}>
@@ -337,14 +384,14 @@ const FingerprintLogin = () => {
         {/* Scan Button */}
         <Button
           onClick={handleManualScan}
-          isLoading={isCapturing || isLoading}
-          disabled={!selectedFinger || !isScannerReady || isCapturing || isLoading}
+          isLoading={wsIsCapturing || isLoading}
+          disabled={!selectedFinger || !scannerReady || wsIsCapturing || isLoading}
           className="w-full"
           size="lg"
           variant={selectedFinger ? 'primary' : 'secondary'}
         >
-          {isCapturing ? (
-            '🔍 Scanning...'
+          {wsIsCapturing ? (
+            `🔍 Scanning... ${Math.round(captureProgress)}%`
           ) : isLoading ? (
             '⏳ Verifying...'
           ) : selectedFinger ? (
@@ -354,10 +401,17 @@ const FingerprintLogin = () => {
           )}
         </Button>
 
+        {/* Stop scan (only while capturing) */}
+        {wsIsCapturing && (
+          <Button variant="secondary" onClick={handleStopScan} className="w-full mt-2">
+            ⏹ Cancel Scan
+          </Button>
+        )}
+
         {/* Keyboard Shortcut */}
         <div className="text-center mt-3">
           <p className="text-xs text-gray-400">
-            Press <kbd className="px-2 py-1 bg-gray-100 rounded text-xs font-mono">Space</kbd> or 
+            Press <kbd className="px-2 py-1 bg-gray-100 rounded text-xs font-mono">Space</kbd> or
             <kbd className="px-2 py-1 bg-gray-100 rounded text-xs font-mono">Enter</kbd> to scan
           </p>
         </div>

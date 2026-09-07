@@ -1,4 +1,4 @@
-// models/User.js - COMPLETE FIXED VERSION
+// models/User.js - COMPLETE FIXED VERSION (login bugs patched)
 
 const mongoose = require('mongoose');
 
@@ -27,14 +27,12 @@ const VolunteerSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true,
-    // ✅ REMOVED required: true - pre-save will generate this
   },
   initials: {
     type: String,
     maxlength: 10,
-    // ✅ REMOVED required: true - pre-save will generate this
   },
-  
+
   // === PROFILE PHOTO ===
   profilePhoto: {
     type: String,
@@ -74,13 +72,13 @@ const VolunteerSchema = new mongoose.Schema({
       message: 'Volunteer must be at least 18 years old'
     }
   },
-  
+
   gender: {
     type: String,
     required: true,
     enum: ['Male', 'Female', 'Other']
   },
-  
+
   maritalStatus: {
     type: String,
     required: true,
@@ -251,6 +249,25 @@ const VolunteerSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+
+  // === LOGIN / LOCKOUT TRACKING ===
+  // ✅ FIX: these fields were missing even though authController.login() and
+  // authController.loginWithFingerprint() both call methods that depend on them
+  // (user.isLocked, user.incrementLoginAttempts(), user.resetLoginAttempts(),
+  // user.updateLastLogin()) — every login attempt threw a TypeError before this.
+  loginAttempts: {
+    type: Number,
+    default: 0
+  },
+  lockUntil: {
+    type: Date,
+    default: null
+  },
+  lastLoginAt: {
+    type: Date,
+    default: null
+  },
+
   createdAt: {
     type: Date,
     default: Date.now
@@ -267,24 +284,17 @@ const VolunteerSchema = new mongoose.Schema({
 
 // === PRE-SAVE HOOK - Generate Volunteer ID and Initials ===
 VolunteerSchema.pre('save', async function(next) {
-  console.log('🔧 Pre-save hook triggered');
-  console.log('📋 Is new document?', this.isNew);
-  
   try {
     if (this.isNew) {
-      console.log('🆕 Generating Volunteer ID and Initials...');
-      
       // Generate Volunteer ID
-      const count = await mongoose.model('Volunteer').countDocuments();
+      const count = await mongoose.model('User').countDocuments();
       const nextNumber = count + 1;
       this.volunteerId = String(nextNumber).padStart(4, '0');
-      console.log(`📋 Generated Volunteer ID: ${this.volunteerId}`);
-      
+
       // Generate Initials
       this.initials = generateInitials(this.firstName, this.middleName, this.lastName);
-      console.log(`🔤 Generated Initials: ${this.initials}`);
     }
-    
+
     this.updatedAt = new Date();
     next();
   } catch (error) {
@@ -305,13 +315,51 @@ VolunteerSchema.virtual('age').get(function() {
   return calculateAge(this.dateOfBirth);
 });
 
+// ✅ FIX: added — authController.login() checks `user.isLocked` before this existed
+VolunteerSchema.virtual('isLocked').get(function() {
+  return !!(this.lockUntil && this.lockUntil > Date.now());
+});
+
 // === METHODS ===
 VolunteerSchema.methods = {
   sanitize: function() {
     const user = this.toObject();
     delete user.__v;
     delete user.password;
+    delete user.loginAttempts;
+    delete user.lockUntil;
     return user;
+  },
+
+  // ✅ FIX: added — was called in login()/loginWithFingerprint() but never defined
+  incrementLoginAttempts: async function() {
+    // Reset the counter if a previous lock has already expired
+    if (this.lockUntil && this.lockUntil < Date.now()) {
+      this.loginAttempts = 1;
+      this.lockUntil = null;
+    } else {
+      this.loginAttempts = (this.loginAttempts || 0) + 1;
+      if (this.loginAttempts >= 5) {
+        this.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 min lock
+      }
+    }
+    await this.save();
+    return this;
+  },
+
+  // ✅ FIX: added
+  resetLoginAttempts: async function() {
+    this.loginAttempts = 0;
+    this.lockUntil = null;
+    await this.save();
+    return this;
+  },
+
+  // ✅ FIX: added
+  updateLastLogin: async function() {
+    this.lastLoginAt = new Date();
+    await this.save();
+    return this;
   }
 };
 
@@ -330,4 +378,10 @@ VolunteerSchema.index({ email: 1 }, { unique: true, sparse: true });
 VolunteerSchema.index({ status: 1 });
 VolunteerSchema.index({ createdAt: -1 });
 
-module.exports = mongoose.model('Volunteer', VolunteerSchema);
+// ✅ FIX: was mongoose.model('Volunteer', ...), but Fingerprint.js, Session.js and
+// AuditLog.js all declare `ref: 'User'`. Mongoose had no model registered under that
+// name, so any .populate('userId') call (including the one in loginWithFingerprint())
+// threw `MissingSchemaError: Schema hasn't been registered for model "User"`.
+// Requiring this file as `const Volunteer = require('../models/User')` elsewhere is
+// still fine — only the string passed to mongoose.model() below matters for `ref`.
+module.exports = mongoose.model('User', VolunteerSchema);
