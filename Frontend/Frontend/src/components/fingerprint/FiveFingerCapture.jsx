@@ -1,12 +1,12 @@
-// client/src/components/fingerprint/FiveFingerCapture.jsx - WITH SCANNER MODE POPUP (FULLY FIXED)
+// client/src/components/fingerprint/FiveFingerCapture.jsx - COMPLETE WITH SCANNER MODE INDICATOR
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FingerprintVisualizer } from './FingerprintVisualizer';
 import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
 import { QualityIndicator } from './QualityIndicator';
 import { Button } from '../common/Button';
 import { Alert } from '../common/Alert';
-import { ScannerModePopup } from './ScannerModePopup';
+import { ScannerModeIndicator } from './ScannerModeIndicator';
 
 const FINGER_NAMES = {
   right_thumb: 'Right Thumb',
@@ -45,8 +45,9 @@ export const FiveFingerCapture = ({
   const [isComplete, setIsComplete] = useState(false);
   const [currentFingerData, setCurrentFingerData] = useState(null);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
+  const [captureSource, setCaptureSource] = useState('unknown');
   
-  // ✅ Popup state - force show on mount
+  // ✅ Popup state
   const [showModePopup, setShowModePopup] = useState(true);
   const [popupClosed, setPopupClosed] = useState(false);
 
@@ -56,7 +57,6 @@ export const FiveFingerCapture = ({
   // ✅ FORCE POPUP TO SHOW ON MOUNT
   useEffect(() => {
     console.log('📱 FiveFingerCapture mounted - showing scanner mode popup');
-    // Reset popup state to ensure it shows
     setShowModePopup(true);
     setPopupClosed(false);
   }, []);
@@ -64,16 +64,39 @@ export const FiveFingerCapture = ({
   // ✅ Get scanner status display
   const getScannerDisplay = useCallback(() => {
     if (!isConnected) {
-      return { text: '🔴 Scanner Disconnected', color: 'text-red-500', bg: 'bg-red-50' };
+      return { 
+        text: '🔴 Scanner Disconnected', 
+        color: 'text-red-500', 
+        bg: 'bg-red-50',
+        mode: 'offline'
+      };
     }
-    if (scannerStatus.deviceConnected) {
+    if (scannerStatus.deviceConnected && !scannerStatus.isSimulated) {
       const model = scannerStatus.deviceInfo?.Model || 'Scanner';
-      return { text: `🟢 ${model} (Online)`, color: 'text-green-500', bg: 'bg-green-50' };
+      setCaptureSource('real_device');
+      return { 
+        text: `🟢 ${model} (Real Scanner)`, 
+        color: 'text-green-500', 
+        bg: 'bg-green-50',
+        mode: 'real'
+      };
     }
     if (scannerStatus.isSimulated) {
-      return { text: '🟡 Simulated Mode (No Device)', color: 'text-yellow-500', bg: 'bg-yellow-50' };
+      setCaptureSource('simulated');
+      return { 
+        text: '🟡 Simulated Mode (No Device)', 
+        color: 'text-yellow-500', 
+        bg: 'bg-yellow-50',
+        mode: 'simulated'
+      };
     }
-    return { text: '🔴 Scanner Offline', color: 'text-red-500', bg: 'bg-red-50' };
+    setCaptureSource('unknown');
+    return { 
+      text: '🔴 Scanner Offline', 
+      color: 'text-red-500', 
+      bg: 'bg-red-50',
+      mode: 'offline'
+    };
   }, [isConnected, scannerStatus]);
 
   const scannerDisplay = getScannerDisplay();
@@ -83,9 +106,11 @@ export const FiveFingerCapture = ({
     if (!fingerprintData) return;
 
     console.log('📥 Raw fingerprint data received:', fingerprintData);
+    console.log('🔍 Capture source from data:', fingerprintData.source || 'unknown');
 
     const fingerType = fingerprintData.fingerType || currentFinger;
 
+    // ✅ Extract template data
     let templateData = fingerprintData.data || 
                        fingerprintData.template || 
                        fingerprintData.templateData;
@@ -100,6 +125,10 @@ export const FiveFingerCapture = ({
       return;
     }
 
+    // ✅ Track capture source
+    const source = fingerprintData.source || scannerDisplay.mode || 'unknown';
+    setCaptureSource(source);
+
     const capturedData = {
       data: templateData,
       format: fingerprintData.format || 'ISO_19794_2',
@@ -107,10 +136,13 @@ export const FiveFingerCapture = ({
       metrics: fingerprintData.metrics || {},
       imageData: fingerprintData.imageData || null,
       minutiae: fingerprintData.minutiae || [],
+      source: source,
+      sourceLabel: source === 'real_device' ? '🔴 REAL SCANNER' : '🟡 SIMULATED'
     };
 
     console.log(`✅ Captured ${fingerType} with quality: ${capturedData.quality}%`);
     console.log(`📊 Data length: ${capturedData.data.length} characters`);
+    console.log(`🔍 Source: ${capturedData.sourceLabel}`);
 
     setCurrentFingerData(capturedData);
     
@@ -137,11 +169,12 @@ export const FiveFingerCapture = ({
         setIsComplete(true);
         setTimeout(() => {
           console.log('🎉 All fingers captured:', updatedFingers);
+          console.log('📊 Capture source:', source);
           onComplete?.(updatedFingers);
         }, 500);
       }
     }
-  }, [fingerprintData, currentFinger, capturedFingers, onComplete, resetFingerprintData, isAutoAdvancing]);
+  }, [fingerprintData, currentFinger, capturedFingers, onComplete, resetFingerprintData, isAutoAdvancing, scannerDisplay.mode]);
 
   // ✅ Handle WebSocket errors
   useEffect(() => {
@@ -161,15 +194,18 @@ export const FiveFingerCapture = ({
         currentFinger: currentFinger,
         isCapturing: isCapturing,
         status: isComplete ? 'complete' : isCapturing ? 'capturing' : 'ready',
+        source: captureSource,
+        sourceLabel: captureSource === 'real_device' ? '🔴 REAL' : '🟡 SIMULATED'
       });
     }
-  }, [capturedFingers, currentFingerIndex, progress, isCapturing, captureProgress, isComplete]);
+  }, [capturedFingers, currentFingerIndex, progress, isCapturing, captureProgress, isComplete, captureSource]);
 
   // ✅ Handle start capture
   const handleStartCapture = () => {
     setLocalError('');
     clearError();
     console.log(`🔍 Starting capture for: ${currentFinger}`);
+    console.log(`📊 Current scanner mode: ${scannerDisplay.mode}`);
     startCapture(currentFinger);
   };
 
@@ -199,9 +235,41 @@ export const FiveFingerCapture = ({
     resetFingerprintData();
     setLocalError('');
     clearError();
+    setCaptureSource('unknown');
   };
 
   const allFingersCaptured = Object.keys(capturedFingers).length === FINGER_ORDER.length;
+
+  // ✅ Get visual mode indicator
+  const getModeVisual = () => {
+    if (scannerDisplay.mode === 'real') {
+      return {
+        border: 'border-green-500',
+        bg: 'bg-green-50',
+        text: 'text-green-700',
+        badge: 'bg-green-500',
+        label: 'REAL SCANNER'
+      };
+    }
+    if (scannerDisplay.mode === 'simulated') {
+      return {
+        border: 'border-yellow-500',
+        bg: 'bg-yellow-50',
+        text: 'text-yellow-700',
+        badge: 'bg-yellow-500',
+        label: 'SIMULATED'
+      };
+    }
+    return {
+      border: 'border-red-500',
+      bg: 'bg-red-50',
+      text: 'text-red-700',
+      badge: 'bg-red-500',
+      label: 'OFFLINE'
+    };
+  };
+
+  const modeVisual = getModeVisual();
 
   // ✅ Render
   return (
@@ -219,8 +287,11 @@ export const FiveFingerCapture = ({
         />
       )}
 
-      {/* Scanner Status Display */}
-      <div className={`p-3 rounded-lg border ${scannerDisplay.bg} border-gray-200`}>
+      {/* ✅ Scanner Mode Indicator at top */}
+      <ScannerModeIndicator showDetails={true} />
+
+      {/* Scanner Status Display with Mode Badge */}
+      <div className={`p-3 rounded-lg border-2 ${scannerDisplay.bg} border-gray-200`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-xl">{scannerDisplay.text.split(' ')[0]}</span>
@@ -228,25 +299,29 @@ export const FiveFingerCapture = ({
               {scannerDisplay.text}
             </span>
           </div>
-          {scannerStatus.deviceInfo && (
-            <span className="text-xs text-gray-500">
-              {scannerStatus.deviceInfo.Manufacturer} {scannerStatus.deviceInfo.Model}
-            </span>
-          )}
+          <div className={`px-3 py-1 rounded-full text-xs font-bold text-white ${modeVisual.badge}`}>
+            {modeVisual.label}
+          </div>
         </div>
-        {scannerStatus.isSimulated && !scannerStatus.deviceConnected && (
+        {scannerStatus.deviceInfo && scannerDisplay.mode === 'real' && (
+          <p className="text-xs text-green-600 mt-1">
+            📱 {scannerStatus.deviceInfo.Manufacturer} {scannerStatus.deviceInfo.Model}
+            {scannerStatus.deviceInfo.SerialNumber && ` · SN: ${scannerStatus.deviceInfo.SerialNumber}`}
+          </p>
+        )}
+        {scannerDisplay.mode === 'simulated' && (
           <p className="text-xs text-yellow-600 mt-1">
             💡 No physical scanner detected. Using simulated mode for development.
           </p>
         )}
-        {scannerStatus.deviceConnected && (
+        {scannerDisplay.mode === 'real' && (
           <p className="text-xs text-green-600 mt-1">
             ✅ Fingerprint scanner is ready. Place your finger on the device.
           </p>
         )}
       </div>
 
-      {/* Fingerprint Visualizer */}
+      {/* Fingerprint Visualizer with Mode Badge */}
       <div className="relative">
         <FingerprintVisualizer
           imageData={currentFingerData?.imageData || null}
@@ -258,6 +333,8 @@ export const FiveFingerCapture = ({
           height={400}
           showMinutiae={true}
           showHeatmap={true}
+          mode={scannerDisplay.mode === 'real' ? 'real' : 'simulated'}
+          sourceLabel={currentFingerData?.sourceLabel || (scannerDisplay.mode === 'real' ? '🔴 REAL' : '🟡 SIMULATED')}
         />
 
         {/* Status Overlay */}
@@ -265,13 +342,13 @@ export const FiveFingerCapture = ({
           <div className="flex items-center justify-between">
             <span className={`text-xs ${isConnected ? 'text-white/80' : 'text-red-400'}`}>
               {!isConnected ? '🔴 Scanner Disconnected' : 
-               scannerStatus.deviceConnected ? '🟢 Scanner Online' : 
-               scannerStatus.isSimulated ? '🟡 Simulated Mode' : 
+               scannerDisplay.mode === 'real' ? '🟢 Real Scanner Online' : 
+               scannerDisplay.mode === 'simulated' ? '🟡 Simulated Mode' : 
                '🔴 Scanner Offline'}
             </span>
             {isCapturing && (
               <span className="text-xs text-blue-300 animate-pulse">
-                Scanning... {Math.round(captureProgress)}%
+                {scannerDisplay.mode === 'real' ? '🔴' : '🟡'} Scanning... {Math.round(captureProgress)}%
               </span>
             )}
           </div>
@@ -313,15 +390,32 @@ export const FiveFingerCapture = ({
           <>
             {currentFingerData ? (
               <div className="space-y-3">
-                <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                <div className={`p-3 rounded-lg border ${
+                  currentFingerData.source === 'real_device' 
+                    ? 'bg-green-50 border-green-200' 
+                    : 'bg-yellow-50 border-yellow-200'
+                }`}>
                   <div className="flex items-center gap-2">
-                    <span className="text-2xl">✅</span>
+                    <span className="text-2xl">
+                      {currentFingerData.source === 'real_device' ? '🟢' : '🟡'}
+                    </span>
                     <div>
-                      <p className="font-medium text-green-800">Captured!</p>
-                      <p className="text-sm text-green-700">
-                        Quality: {Math.round(currentFingerData.quality)}%
+                      <p className={`font-medium ${
+                        currentFingerData.source === 'real_device' 
+                          ? 'text-green-800' 
+                          : 'text-yellow-800'
+                      }`}>
+                        {currentFingerData.source === 'real_device' ? '✅ REAL CAPTURE!' : '⚠️ SIMULATED CAPTURE'}
                       </p>
-                      <p className="text-xs text-green-600 mt-1">
+                      <p className={`text-sm ${
+                        currentFingerData.source === 'real_device' 
+                          ? 'text-green-700' 
+                          : 'text-yellow-700'
+                      }`}>
+                        Quality: {Math.round(currentFingerData.quality)}%
+                        {currentFingerData.source === 'real_device' && ' · From physical device'}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">
                         Data size: {currentFingerData.data.length} characters
                       </p>
                     </div>
@@ -344,17 +438,20 @@ export const FiveFingerCapture = ({
                   disabled={isCapturing || !isConnected || disabled || isAutoAdvancing}
                   className="w-full"
                   size="lg"
+                  variant={scannerDisplay.mode === 'real' ? 'primary' : 'warning'}
                 >
                   {isCapturing
-                    ? `Scanning ${FINGER_NAMES[currentFinger]}...`
+                    ? `${scannerDisplay.mode === 'real' ? '🔴' : '🟡'} Scanning ${FINGER_NAMES[currentFinger]}...`
                     : !isConnected
                     ? '🔴 Scanner Not Connected'
-                    : `Capture ${FINGER_NAMES[currentFinger]}`}
+                    : scannerDisplay.mode === 'real'
+                    ? `🟢 Capture ${FINGER_NAMES[currentFinger]} (Real)`
+                    : `🟡 Capture ${FINGER_NAMES[currentFinger]} (Simulated)`}
                 </Button>
 
                 {isCapturing && (
                   <Button variant="secondary" onClick={handleStopCapture} className="w-full">
-                    Stop Capture
+                    ⏹ Stop Capture
                   </Button>
                 )}
               </div>
@@ -370,9 +467,20 @@ export const FiveFingerCapture = ({
               <span className="text-3xl">🎉</span>
               <div>
                 <h5 className="font-semibold text-green-800">All Fingers Captured!</h5>
-                <p className="text-sm text-green-700">Quality scores are good. Ready to save.</p>
+                <p className="text-sm text-green-700">
+                  Quality scores are good. Ready to save.
+                  {Object.values(capturedFingers).some(f => f.source === 'real_device') && 
+                    ' ✅ Real device data included.'}
+                </p>
                 <p className="text-xs text-green-600 mt-1">
                   Total data size: {Object.values(capturedFingers).reduce((sum, f) => sum + f.data.length, 0)} characters
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Source: {Object.values(capturedFingers).every(f => f.source === 'real_device') 
+                    ? '🔴 All from REAL device' 
+                    : Object.values(capturedFingers).some(f => f.source === 'real_device')
+                    ? '🔴 Mixed (Real + Simulated)'
+                    : '🟡 All SIMULATED'}
                 </p>
               </div>
             </div>
@@ -380,19 +488,25 @@ export const FiveFingerCapture = ({
         )}
       </div>
 
-      {/* Finger status grid */}
+      {/* Finger status grid with source indicators */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {FINGER_ORDER.map((finger, index) => {
           const isCaptured = !!capturedFingers[finger];
           const isCurrent = index === currentFingerIndex;
+          const fingerData = capturedFingers[finger];
+          const isReal = fingerData?.source === 'real_device';
 
           return (
             <div
               key={finger}
               className={`
-                p-2 rounded-lg text-center transition-all
-                ${isCaptured ? 'bg-green-50 border-green-400' : 'bg-gray-50 border-gray-300'}
-                ${isCurrent && !isCaptured ? 'border-2 border-biomed-green animate-pulse' : 'border'}
+                p-2 rounded-lg text-center transition-all border-2
+                ${isCaptured ? (
+                  isReal 
+                    ? 'bg-green-50 border-green-400' 
+                    : 'bg-yellow-50 border-yellow-400'
+                ) : 'bg-gray-50 border-gray-300'}
+                ${isCurrent && !isCaptured ? 'border-2 border-biomed-green animate-pulse' : ''}
                 ${isCaptured ? 'opacity-100' : 'opacity-70'}
                 ${disabled ? 'opacity-50' : ''}
               `}
@@ -402,16 +516,26 @@ export const FiveFingerCapture = ({
               </div>
               <div className="mt-1">
                 {isCaptured ? (
-                  <span className="text-green-600">✅</span>
+                  isReal ? (
+                    <span className="text-green-600" title="Real device capture">🟢</span>
+                  ) : (
+                    <span className="text-yellow-600" title="Simulated capture">🟡</span>
+                  )
                 ) : isCurrent ? (
                   <span className="text-blue-600">🔄</span>
                 ) : (
                   <span className="text-gray-400">⏳</span>
                 )}
               </div>
-              {isCaptured && capturedFingers[finger] && (
+              {isCaptured && fingerData && (
                 <div className="text-xs text-gray-500 mt-1">
-                  {Math.round(capturedFingers[finger].quality)}%
+                  {Math.round(fingerData.quality)}%
+                  {isReal && <span className="text-green-600 ml-1">●</span>}
+                </div>
+              )}
+              {isCaptured && (
+                <div className="text-[10px] text-gray-400 mt-0.5">
+                  {isReal ? 'REAL' : 'SIM'}
                 </div>
               )}
             </div>

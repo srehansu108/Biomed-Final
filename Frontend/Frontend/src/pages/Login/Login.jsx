@@ -13,6 +13,7 @@ import { FingerSelector } from '../../components/fingerprint/FingerSelector';
 import { ScannerModePopup } from '../../components/fingerprint/ScannerModePopup'; // ✅ NEW IMPORT
 import axiosInstance from '../../api/axiosConfig';
 
+
 // ✅ Finger types with display names and icons
 const FINGER_TYPES = [
   { id: 'right_thumb', label: 'Right Thumb', icon: '👍', description: 'Right hand thumb' },

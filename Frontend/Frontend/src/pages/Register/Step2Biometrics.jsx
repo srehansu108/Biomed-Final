@@ -1,4 +1,4 @@
-// client/src/pages/Register/Step2Biometrics.jsx - WITH PROGRESS
+// client/src/pages/Register/Step2Biometrics.jsx - COMPLETE WITH SCANNER MODE INDICATOR
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
@@ -8,6 +8,7 @@ import { Card } from '../../components/common/Card';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
 import { useAuth } from '../../hooks/useAuth';
+import { ScannerModeIndicator } from '../../components/fingerprint/ScannerModeIndicator';
 
 const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propError }) => {
   const { uploadProgress } = useAuth();
@@ -22,6 +23,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
   const [fingerError, setFingerError] = useState(null);
   const [submitError, setSubmitError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [captureSource, setCaptureSource] = useState('unknown');
   
   const webcamRef = useRef(null);
 
@@ -58,6 +60,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     setCapturedCount(data.capturedCount || 0);
     setFingers(data.capturedFingers || {});
     setCaptureStatus(data.status || 'Capturing fingerprints...');
+    setCaptureSource(data.source || 'unknown');
     setSubmitError(null);
     
     if (data.capturedCount === 5) {
@@ -68,12 +71,24 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
   // ✅ Handle fingerprint completion
   const handleFingerprintComplete = useCallback((capturedFingers) => {
     console.log('✅ Fingerprint capture complete:', capturedFingers);
+    console.log('🔍 Capture source:', Object.values(capturedFingers)[0]?.source || 'unknown');
     setFingers(capturedFingers);
     setCapturedCount(Object.keys(capturedFingers).length);
     setCaptureProgress(100);
     setCaptureStatus('✅ All fingerprints captured!');
     setFingerError(null);
     setSubmitError(null);
+    
+    // Check if all are from real device
+    const allReal = Object.values(capturedFingers).every(f => f.source === 'real_device');
+    const anyReal = Object.values(capturedFingers).some(f => f.source === 'real_device');
+    if (allReal) {
+      setCaptureStatus('✅ All 5 fingerprints captured from REAL device!');
+    } else if (anyReal) {
+      setCaptureStatus('⚠️ Mixed capture: Some fingerprints are from real device, some simulated.');
+    } else {
+      setCaptureStatus('🟡 All fingerprints are SIMULATED (no real device detected).');
+    }
   }, []);
 
   // ✅ Handle fingerprint error
@@ -163,6 +178,15 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
       return;
     }
 
+    // ✅ Log capture source before submit
+    const sourceInfo = Object.values(fingers).every(f => f.source === 'real_device') 
+      ? 'All REAL device' 
+      : Object.values(fingers).some(f => f.source === 'real_device')
+      ? 'Mixed (Real + Simulated)'
+      : 'All SIMULATED';
+    
+    console.log(`🔍 Submitting fingerprints: ${sourceInfo}`);
+
     setSubmitError(null);
     setIsSubmitting(true);
     setCaptureStatus('⏳ Preparing upload...');
@@ -171,6 +195,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     const submissionData = {
       fingerprints: fingers,
       profileImage: webcamImage,
+      source: captureSource // Pass source info to backend
     };
 
     try {
@@ -183,7 +208,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
       setIsSubmitting(false);
       throw error;
     }
-  }, [fingers, webcamImage, onSubmit, getSubmitValidation]);
+  }, [fingers, webcamImage, onSubmit, getSubmitValidation, captureSource]);
 
   // ✅ Reset all biometrics
   const resetAll = useCallback(() => {
@@ -196,6 +221,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     setWebcamError(null);
     setSubmitError(null);
     setIsSubmitting(false);
+    setCaptureSource('unknown');
   }, []);
 
   // ✅ Retry fingerprint capture
@@ -206,6 +232,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
     setFingerError(null);
     setCaptureStatus('Retrying fingerprint capture...');
     setSubmitError(null);
+    setCaptureSource('unknown');
   }, []);
 
   return (
@@ -220,6 +247,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
           <p className={`mt-2 text-sm ${
             captureStatus.includes('✅') ? 'text-green-600' : 
             captureStatus.includes('❌') ? 'text-red-600' : 
+            captureStatus.includes('⚠️') ? 'text-yellow-600' : 
             'text-gray-600'
           }`}>
             {captureStatus}
@@ -240,6 +268,14 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Left Column - Fingerprint Capture */}
         <div className="space-y-6">
+          {/* ✅ Scanner Mode Indicator */}
+          <Card>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              🔍 Scanner Status
+            </h3>
+            <ScannerModeIndicator showDetails={true} />
+          </Card>
+
           <Card>
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Five Finger Scanning
@@ -282,22 +318,32 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
               </Button>
             )}
 
-            {/* Captured Fingers List */}
+            {/* Captured Fingers List with Source Info */}
             {capturedCount > 0 && (
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <p className="text-sm font-medium text-gray-700 mb-2">
                   Captured Fingers:
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {Object.keys(fingers).map((finger) => (
-                    <span 
-                      key={finger} 
-                      className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full"
-                    >
-                      <span>✅</span>
-                      {finger.replace('_', ' ').toUpperCase()}
-                    </span>
-                  ))}
+                  {Object.entries(fingers).map(([finger, data]) => {
+                    const isReal = data?.source === 'real_device';
+                    return (
+                      <span 
+                        key={finger} 
+                        className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+                          isReal 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}
+                      >
+                        <span>{isReal ? '🟢' : '🟡'}</span>
+                        {finger.replace('_', ' ').toUpperCase()}
+                        <span className="text-[10px] opacity-75">
+                          ({isReal ? 'REAL' : 'SIM'})
+                        </span>
+                      </span>
+                    );
+                  })}
                   {fingerNames
                     .filter(f => !fingers[f])
                     .map((finger) => (
@@ -310,6 +356,21 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                       </span>
                     ))}
                 </div>
+                {/* Source summary */}
+                {capturedCount === 5 && (
+                  <div className="mt-2 text-xs">
+                    {Object.values(fingers).every(f => f.source === 'real_device') && (
+                      <span className="text-green-600 font-medium">✅ All from REAL device</span>
+                    )}
+                    {Object.values(fingers).some(f => f.source === 'real_device') && 
+                     !Object.values(fingers).every(f => f.source === 'real_device') && (
+                      <span className="text-yellow-600 font-medium">⚠️ Mixed: Real + Simulated</span>
+                    )}
+                    {Object.values(fingers).every(f => f.source !== 'real_device') && (
+                      <span className="text-yellow-600 font-medium">🟡 All SIMULATED</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -321,10 +382,11 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
             </h4>
             <ul className="text-sm text-blue-800 space-y-1">
               <li>• Place your finger flat on the scanner</li>
-              <li>• Apply normal pressure</li>
+              <li>• Apply normal pressure (not too hard, not too soft)</li>
               <li>• Ensure good lighting</li>
               <li>• Keep fingers clean and dry</li>
               <li>• Wait for the beep before lifting your finger</li>
+              <li>• {captureSource === 'real_device' ? '🔴 Using REAL scanner' : '🟡 Using SIMULATED mode'}</li>
             </ul>
           </div>
         </div>
@@ -460,6 +522,26 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                 />
               </div>
 
+              {/* Capture Source Info */}
+              {capturedCount > 0 && (
+                <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                  <span className="text-sm text-gray-600">Capture Source:</span>
+                  <span className={`text-sm font-medium ${
+                    Object.values(fingers).every(f => f.source === 'real_device') 
+                      ? 'text-green-600' 
+                      : Object.values(fingers).some(f => f.source === 'real_device')
+                      ? 'text-yellow-600'
+                      : 'text-yellow-600'
+                  }`}>
+                    {Object.values(fingers).every(f => f.source === 'real_device') 
+                      ? '🟢 All REAL' 
+                      : Object.values(fingers).some(f => f.source === 'real_device')
+                      ? '🟡 Mixed'
+                      : '🟡 All SIMULATED'}
+                  </span>
+                </div>
+              )}
+
               {/* Profile Photo Status */}
               <div className="flex justify-between items-center pt-2 border-t border-gray-200">
                 <span className="text-sm text-gray-600">Profile Photo:</span>
@@ -497,6 +579,16 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
                   {allFingersCaptured && webcamImage ? '✅ Ready to submit' : '⏳ Incomplete'}
                 </span>
               </div>
+
+              {/* Scanner Mode Status */}
+              <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                <span className="text-sm text-gray-600">Scanner Mode:</span>
+                <span className={`text-sm font-medium ${
+                  captureSource === 'real_device' ? 'text-green-600' : 'text-yellow-600'
+                }`}>
+                  {captureSource === 'real_device' ? '🟢 REAL' : '🟡 SIMULATED'}
+                </span>
+              </div>
             </div>
           </Card>
 
@@ -514,6 +606,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propErr
               onClick={handleSubmit}
               disabled={!allFingersCaptured || !webcamImage || isLoading || isSubmitting}
               className="flex-1"
+              variant={allFingersCaptured && webcamImage ? 'primary' : 'secondary'}
             >
               {isLoading || isSubmitting ? (
                 <span className="flex items-center justify-center gap-2">

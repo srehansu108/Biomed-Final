@@ -1,118 +1,93 @@
 // server/addons/futronic.node.js
 const path = require('path');
-const ffi = require('ffi-napi');
-const ref = require('ref-napi');
-const Struct = require('ref-struct-di')(ref);
-const ArrayType = require('ref-array-di')(ref);
+const fs = require('fs');
 
 // ============================================
-// FUTRONIC SDK STRUCTURES
+// FUTRONIC SDK WRAPPER WITH FALLBACKS
 // ============================================
 
-// Fingerprint image structure
-const FT_Image = Struct({
-  'Width': 'uint32',
-  'Height': 'uint32', 
-  'Resolution': 'uint32',
-  'ImageData': 'pointer',  // Buffer of image data
-  'ImageSize': 'uint32'
-});
-
-// Fingerprint template structure
-const FT_Template = Struct({
-  'TemplateData': 'pointer',
-  'TemplateSize': 'uint32',
-  'Format': 'uint32'  // 1 = ANSI 378, 2 = ISO 19794-2
-});
-
-// Quality metrics
-const FT_Quality = Struct({
-  'OverallScore': 'uint32',
-  'NFIQScore': 'uint32',
-  'MinutiaeCount': 'uint32',
-  'ImageClarity': 'uint32'
-});
-
-// Device info
-const FT_DeviceInfo = Struct({
-  'Manufacturer': ArrayType('char', 128),
-  'Model': ArrayType('char', 128),
-  'SerialNumber': ArrayType('char', 64),
-  'FirmwareVersion': ArrayType('char', 32)
-});
-
-// ============================================
-// FUTRONIC SDK FUNCTIONS
-// ============================================
-
-const sdkPath = process.env.SCANNER_SDK_PATH || 'C:/Program Files (x86)/Common Files/Futronic/sdk';
-
-class FutronicSDK {
+class FutronicSDKWrapper {
   constructor() {
     this.isInitialized = false;
     this.deviceHandle = null;
     this.deviceInfo = null;
-    
-    // Load the DLL
-    this.dllPath = path.join(sdkPath, 'bin', 'FT_Finger.dll');
+    this.dllPath = null;
     this.ftLib = null;
+    this.isLoaded = false;
   }
 
   initialize() {
     try {
-      // Load the Futronic DLL
-      this.ftLib = ffi.Library(this.dllPath, {
-        // Device Management
-        'FT_Init': ['bool', []],
-        'FT_OpenDevice': ['bool', ['int', 'pointer']],
-        'FT_CloseDevice': ['bool', ['pointer']],
-        'FT_GetDeviceInfo': ['bool', ['pointer', 'pointer']],
-        'FT_EnumDevices': ['uint32', ['pointer', 'uint32']],
+      // Get SDK path from environment
+      const sdkPath = process.env.SCANNER_SDK_PATH || 'C:/Program Files (x86)/Common Files/Futronic/sdk';
+      this.dllPath = path.join(sdkPath, 'bin', 'FT_Finger.dll');
+      
+      console.log(`📁 Looking for Futronic DLL at: ${this.dllPath}`);
+      
+      // Check if DLL exists
+      if (!fs.existsSync(this.dllPath)) {
+        console.warn(`⚠️ Futronic DLL not found at: ${this.dllPath}`);
+        console.warn('💡 Please install Futronic SDK and set SCANNER_SDK_PATH correctly');
+        return false;
+      }
 
-        // Fingerprint Capture
-        'FT_CaptureFinger': ['bool', ['pointer', 'pointer', 'uint32']],
-        'FT_CaptureFingerWithQuality': ['bool', ['pointer', 'pointer', 'pointer', 'uint32']],
-        'FT_GetFingerImage': ['bool', ['pointer', 'pointer']],
-        'FT_GetFingerTemplate': ['bool', ['pointer', 'pointer']],
+      console.log('✅ Found Futronic DLL');
+      
+      // Try to load the DLL using ffi-napi
+      try {
+        const ffi = require('ffi-napi');
+        const ref = require('ref-napi');
         
-        // Template Processing
-        'FT_ExtractTemplate': ['bool', ['pointer', 'pointer', 'pointer']],
-        'FT_CompareTemplates': ['float', ['pointer', 'pointer']],
-        'FT_CompareTemplatesWithScore': ['bool', ['pointer', 'pointer', 'pointer']],
+        // Load the library
+        this.ftLib = ffi.Library(this.dllPath, {
+          'FT_Init': ['bool', []],
+          'FT_OpenDevice': ['bool', ['int', 'pointer']],
+          'FT_CloseDevice': ['bool', ['pointer']],
+          'FT_GetDeviceInfo': ['bool', ['pointer', 'pointer']],
+          'FT_EnumDevices': ['uint32', ['pointer', 'uint32']],
+          'FT_CaptureFinger': ['bool', ['pointer', 'pointer', 'uint32']],
+          'FT_CaptureFingerWithQuality': ['bool', ['pointer', 'pointer', 'pointer', 'uint32']],
+          'FT_GetFingerImage': ['bool', ['pointer', 'pointer']],
+          'FT_GetFingerTemplate': ['bool', ['pointer', 'pointer']],
+          'FT_ExtractTemplate': ['bool', ['pointer', 'pointer', 'pointer']],
+          'FT_CompareTemplates': ['float', ['pointer', 'pointer']],
+          'FT_CompareTemplatesWithScore': ['bool', ['pointer', 'pointer', 'pointer']],
+          'FT_GetImageQuality': ['bool', ['pointer', 'pointer']],
+          'FT_GetNFIQScore': ['uint32', ['pointer']],
+          'FT_CheckLiveness': ['bool', ['pointer']],
+          'FT_GetLivenessScore': ['float', ['pointer']],
+          'FT_GetBitmap': ['bool', ['pointer', 'pointer', 'uint32']],
+          'FT_SaveImage': ['bool', ['pointer', 'string']],
+          'FT_GetImageProperties': ['bool', ['pointer', 'pointer']],
+          'FT_GetLastError': ['uint32', []],
+          'FT_GetErrorString': ['string', ['uint32']],
+          'FT_Version': ['string', []]
+        });
         
-        // Quality Assessment
-        'FT_GetImageQuality': ['bool', ['pointer', 'pointer']],
-        'FT_GetNFIQScore': ['uint32', ['pointer']],
+        this.isLoaded = true;
+        console.log('✅ Futronic SDK loaded successfully');
+        return true;
         
-        // Liveness Detection
-        'FT_CheckLiveness': ['bool', ['pointer']],
-        'FT_GetLivenessScore': ['float', ['pointer']],
-        
-        // Image Processing
-        'FT_GetBitmap': ['bool', ['pointer', 'pointer', 'uint32']],
-        'FT_SaveImage': ['bool', ['pointer', 'string']],
-        'FT_GetImageProperties': ['bool', ['pointer', 'pointer']],
-        
-        // Utilities
-        'FT_GetLastError': ['uint32', []],
-        'FT_GetErrorString': ['string', ['uint32']],
-        'FT_Version': ['string', []]
-      });
-
-      console.log('✅ Futronic SDK loaded successfully');
-      return true;
+      } catch (error) {
+        console.warn('⚠️ Failed to load Futronic DLL:', error.message);
+        console.warn('💡 Make sure Visual C++ Redistributable is installed');
+        return false;
+      }
+      
     } catch (error) {
-      console.error('❌ Failed to load Futronic SDK:', error.message);
+      console.error('❌ Futronic SDK initialization error:', error.message);
       return false;
     }
   }
 
-  // ============================================
-  // DEVICE MANAGEMENT
-  // ============================================
-
   async enumerateDevices() {
+    if (!this.isLoaded || !this.ftLib) {
+      console.warn('⚠️ SDK not loaded, cannot enumerate devices');
+      return 0;
+    }
+
     try {
+      const { ref } = require('ref-napi');
       const countPtr = ref.alloc('uint32');
       const result = this.ftLib.FT_EnumDevices(countPtr, 0);
       
@@ -121,6 +96,7 @@ class FutronicSDK {
         console.log(`✅ Found ${count} fingerprint device(s)`);
         return count;
       }
+      console.warn(`⚠️ Enumeration failed with code: ${result}`);
       return 0;
     } catch (error) {
       console.error('Enumeration failed:', error);
@@ -129,53 +105,95 @@ class FutronicSDK {
   }
 
   async openDevice(deviceIndex = 0) {
+    if (!this.isLoaded || !this.ftLib) {
+      console.warn('⚠️ SDK not loaded, cannot open device');
+      return false;
+    }
+
     try {
+      const { ref } = require('ref-napi');
       const handlePtr = ref.alloc('pointer');
       const result = this.ftLib.FT_OpenDevice(deviceIndex, handlePtr);
       
       if (result) {
         this.deviceHandle = handlePtr.deref();
         this.isInitialized = true;
-        
-        // Get device info
-        const infoPtr = ref.alloc(FT_DeviceInfo);
-        if (this.ftLib.FT_GetDeviceInfo(this.deviceHandle, infoPtr)) {
-          this.deviceInfo = infoPtr.deref();
-          console.log('✅ Device connected:', {
-            manufacturer: this.deviceInfo.Manufacturer,
-            model: this.deviceInfo.Model,
-            serial: this.deviceInfo.SerialNumber
-          });
-        }
-        
+        console.log('✅ Device opened successfully');
         return true;
       }
       
-      throw new Error('Failed to open fingerprint device');
+      console.warn('⚠️ Failed to open device');
+      return false;
     } catch (error) {
       console.error('Device open failed:', error);
       return false;
     }
   }
 
-  async closeDevice() {
-    if (this.deviceHandle) {
-      this.ftLib.FT_CloseDevice(this.deviceHandle);
-      this.deviceHandle = null;
-      this.isInitialized = false;
+  async getDeviceInfo() {
+    if (!this.isInitialized || !this.deviceHandle) {
+      return null;
+    }
+
+    try {
+      const { ref, Struct, ArrayType } = require('ref-napi');
+      const refStruct = require('ref-struct-di')(ref);
+      
+      const FT_DeviceInfo = refStruct({
+        'Manufacturer': ArrayType('char', 128),
+        'Model': ArrayType('char', 128),
+        'SerialNumber': ArrayType('char', 64),
+        'FirmwareVersion': ArrayType('char', 32)
+      });
+
+      const infoPtr = ref.alloc(FT_DeviceInfo);
+      if (this.ftLib.FT_GetDeviceInfo(this.deviceHandle, infoPtr)) {
+        const info = infoPtr.deref();
+        this.deviceInfo = {
+          Manufacturer: this._cleanString(info.Manufacturer),
+          Model: this._cleanString(info.Model),
+          SerialNumber: this._cleanString(info.SerialNumber),
+          FirmwareVersion: this._cleanString(info.FirmwareVersion)
+        };
+        return this.deviceInfo;
+      }
+      return null;
+    } catch (error) {
+      console.error('Get device info failed:', error);
+      return null;
     }
   }
-
-  // ============================================
-  // FINGERPRINT CAPTURE
-  // ============================================
 
   async captureFingerprint(timeout = 30000) {
     if (!this.isInitialized || !this.deviceHandle) {
       throw new Error('Device not initialized');
     }
 
-    return new Promise((resolve, reject) => {
+    try {
+      const { ref, Struct } = require('ref-napi');
+      const refStruct = require('ref-struct-di')(ref);
+      
+      const FT_Image = refStruct({
+        'Width': 'uint32',
+        'Height': 'uint32',
+        'Resolution': 'uint32',
+        'ImageData': 'pointer',
+        'ImageSize': 'uint32'
+      });
+
+      const FT_Quality = refStruct({
+        'OverallScore': 'uint32',
+        'NFIQScore': 'uint32',
+        'MinutiaeCount': 'uint32',
+        'ImageClarity': 'uint32'
+      });
+
+      const FT_Template = refStruct({
+        'TemplateData': 'pointer',
+        'TemplateSize': 'uint32',
+        'Format': 'uint32'
+      });
+
       const imagePtr = ref.alloc(FT_Image);
       const qualityPtr = ref.alloc(FT_Quality);
       
@@ -190,8 +208,7 @@ class FutronicSDK {
       if (!result) {
         const errorCode = this.ftLib.FT_GetLastError();
         const errorMsg = this.ftLib.FT_GetErrorString(errorCode);
-        reject(new Error(`Capture failed: ${errorMsg} (Code: ${errorCode})`));
-        return;
+        throw new Error(`Capture failed: ${errorMsg} (Code: ${errorCode})`);
       }
 
       const image = imagePtr.deref();
@@ -200,8 +217,7 @@ class FutronicSDK {
       // Extract template
       const templatePtr = ref.alloc(FT_Template);
       if (!this.ftLib.FT_GetFingerTemplate(this.deviceHandle, templatePtr)) {
-        reject(new Error('Failed to extract fingerprint template'));
-        return;
+        throw new Error('Failed to extract fingerprint template');
       }
 
       const template = templatePtr.deref();
@@ -222,7 +238,7 @@ class FutronicSDK {
       const isLive = this.ftLib.FT_CheckLiveness(this.deviceHandle);
       const livenessScore = this.ftLib.FT_GetLivenessScore(this.deviceHandle);
 
-      resolve({
+      return {
         success: true,
         image: {
           data: imageData.toString('base64'),
@@ -246,64 +262,12 @@ class FutronicSDK {
           score: livenessScore || 0.95
         },
         timestamp: new Date().toISOString()
-      });
-    });
-  }
-
-  // ============================================
-  // TEMPLATE MATCHING
-  // ============================================
-
-  compareTemplates(template1, template2) {
-    if (!this.isInitialized) {
-      throw new Error('SDK not initialized');
-    }
-
-    try {
-      // Parse template data
-      const t1 = Buffer.from(template1, 'base64');
-      const t2 = Buffer.from(template2, 'base64');
-
-      const t1Ptr = ref.alloc('pointer', t1);
-      const t2Ptr = ref.alloc('pointer', t2);
-      
-      const scorePtr = ref.alloc('float');
-      const result = this.ftLib.FT_CompareTemplatesWithScore(
-        t1Ptr,
-        t2Ptr,
-        scorePtr
-      );
-
-      if (!result) {
-        throw new Error('Template comparison failed');
-      }
-
-      const score = scorePtr.deref();
-      const isMatch = score >= 0.85;
-
-      return {
-        isMatch,
-        score: score * 100, // Convert to percentage
-        confidence: score,
-        threshold: 0.85,
-        details: {
-          algorithm: 'Futronic SDK Matcher',
-          version: this.ftLib.FT_Version()
-        }
       };
     } catch (error) {
-      console.error('Comparison failed:', error);
-      return {
-        isMatch: false,
-        score: 0,
-        error: error.message
-      };
+      console.error('Capture failed:', error);
+      throw error;
     }
   }
-
-  // ============================================
-  // IMAGE PROCESSING
-  // ============================================
 
   async getLivePreview() {
     if (!this.isInitialized || !this.deviceHandle) {
@@ -311,6 +275,17 @@ class FutronicSDK {
     }
 
     try {
+      const { ref, Struct } = require('ref-napi');
+      const refStruct = require('ref-struct-di')(ref);
+      
+      const FT_Image = refStruct({
+        'Width': 'uint32',
+        'Height': 'uint32',
+        'Resolution': 'uint32',
+        'ImageData': 'pointer',
+        'ImageSize': 'uint32'
+      });
+
       const imagePtr = ref.alloc(FT_Image);
       const result = this.ftLib.FT_GetFingerImage(this.deviceHandle, imagePtr);
       
@@ -333,29 +308,35 @@ class FutronicSDK {
     }
   }
 
-  // ============================================
-  // UTILITY FUNCTIONS
-  // ============================================
+  async closeDevice() {
+    if (this.deviceHandle) {
+      try {
+        this.ftLib.FT_CloseDevice(this.deviceHandle);
+        console.log('✅ Device closed');
+      } catch (error) {
+        console.error('Close device error:', error);
+      }
+      this.deviceHandle = null;
+      this.isInitialized = false;
+    }
+  }
 
   getVersion() {
     try {
-      return this.ftLib.FT_Version();
+      if (this.isLoaded && this.ftLib) {
+        return this.ftLib.FT_Version();
+      }
+      return 'Unknown';
     } catch {
       return 'Unknown';
     }
   }
 
-  getLastError() {
-    try {
-      const code = this.ftLib.FT_GetLastError();
-      return {
-        code,
-        message: this.ftLib.FT_GetErrorString(code)
-      };
-    } catch {
-      return { code: -1, message: 'Unknown error' };
-    }
+  _cleanString(str) {
+    if (!str) return '';
+    // Remove null bytes and trim
+    return str.replace(/\x00/g, '').trim();
   }
 }
 
-module.exports = new FutronicSDK();
+module.exports = new FutronicSDKWrapper();

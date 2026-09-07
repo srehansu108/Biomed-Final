@@ -1,4 +1,4 @@
-// client/src/components/fingerprint/ScannerModePopup.jsx
+// Frontend/src/components/fingerprint/ScannerModePopup.jsx
 
 import React, { useEffect, useState } from 'react';
 import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
@@ -6,7 +6,8 @@ import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
 export const ScannerModePopup = ({ 
   onClose, 
   autoClose = true,
-  duration = 8000 
+  duration = 8000,
+  showButton = true
 }) => {
   const [isVisible, setIsVisible] = useState(true);
   const { scannerStatus, isConnected } = useFingerprintWebSocket();
@@ -152,27 +153,29 @@ export const ScannerModePopup = ({
         </div>
 
         {/* Actions */}
-        <div className="mt-6 flex gap-3">
-          <button
-            onClick={() => {
-              setIsVisible(false);
-              onClose?.();
-            }}
-            className={`flex-1 px-4 py-2.5 text-white rounded-lg font-medium transition-colors ${mode.buttonBg}`}
-          >
-            {isRealScanner ? '✅ Continue' : '⚠️ Continue Anyway'}
-          </button>
-          {!isRealScanner && (
+        {showButton && (
+          <div className="mt-6 flex gap-3">
             <button
               onClick={() => {
-                window.open('https://www.futronic-tech.com/', '_blank');
+                setIsVisible(false);
+                onClose?.();
               }}
-              className="px-4 py-2.5 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+              className={`flex-1 px-4 py-2.5 text-white rounded-lg font-medium transition-colors ${mode.buttonBg}`}
             >
-              🔍 Learn More
+              {isRealScanner ? '✅ Continue' : '⚠️ Continue Anyway'}
             </button>
-          )}
-        </div>
+            {!isRealScanner && (
+              <button
+                onClick={() => {
+                  window.open('https://www.futronic-tech.com/', '_blank');
+                }}
+                className="px-4 py-2.5 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                🔍 Learn More
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Auto-close countdown */}
         {autoClose && (
@@ -187,8 +190,8 @@ export const ScannerModePopup = ({
   );
 };
 
-// ✅ CSS Animation
-const styles = `
+// ✅ CSS Animation (add to your global CSS or index.css)
+export const styles = `
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -203,3 +206,5 @@ const styles = `
   animation: fadeIn 0.3s ease-out;
 }
 `;
+
+export default ScannerModePopup;

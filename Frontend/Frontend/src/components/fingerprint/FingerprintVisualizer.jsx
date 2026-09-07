@@ -8,6 +8,7 @@ import React, { useEffect, useRef, useState } from 'react';
  * - Raw fingerprint image rendering
  * - Minutiae point overlay
  * - Quality heatmap
+ * - Real vs Simulated mode indicator
  */
 export const FingerprintVisualizer = ({
   imageData,      // Base64 image from scanner
@@ -20,6 +21,8 @@ export const FingerprintVisualizer = ({
   height = 400,
   showMinutiae = true,
   showHeatmap = false,
+  mode = 'simulated', // 'real' or 'simulated'
+  sourceLabel = '🟡 SIMULATED',
   onFingerDetected = () => {}
 }) => {
   const canvasRef = useRef(null);
@@ -63,12 +66,15 @@ export const FingerprintVisualizer = ({
         if (showHeatmap) {
           drawHeatmap(ctx, minutiae, width, height);
         }
+
+        // 🔥 Draw mode indicator on image
+        drawModeIndicator(ctx, mode, width, height);
       };
       img.src = `data:image/bmp;base64,${imageData}`;
     } 
     // 🔥 CASE 2: Live scanning animation
     else if (isCapturing) {
-      drawLiveScanning(ctx, width, height, progress);
+      drawLiveScanning(ctx, width, height, progress, mode);
     }
     // 🔥 CASE 3: Placeholder - waiting for finger
     else {
@@ -91,7 +97,7 @@ export const FingerprintVisualizer = ({
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [imageData, minutiae, quality, isCapturing, progress, showMinutiae, showHeatmap, width, height]);
+  }, [imageData, minutiae, quality, isCapturing, progress, showMinutiae, showHeatmap, width, height, mode]);
 
   // 🎯 Draw minutiae points
   const drawMinutiae = (ctx, minutiae, width, height) => {
@@ -179,8 +185,45 @@ export const FingerprintVisualizer = ({
     ctx.fillText('Quality', 25, height - 50);
   };
 
+  // 🔥 Draw mode indicator on captured image
+  const drawModeIndicator = (ctx, mode, width, height) => {
+    const isReal = mode === 'real';
+    const color = isReal ? 'rgba(34, 197, 94, 0.8)' : 'rgba(234, 179, 8, 0.8)';
+    const borderColor = isReal ? '#22c55e' : '#eab308';
+    const label = isReal ? '🔴 REAL CAPTURE' : '🟡 SIMULATED';
+    
+    // Draw badge background
+    const badgeWidth = 140;
+    const badgeHeight = 30;
+    const x = width - badgeWidth - 15;
+    const y = 15;
+    
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, badgeWidth, badgeHeight, 8);
+    ctx.fill();
+    
+    // Draw border
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x, y, badgeWidth, badgeHeight, 8);
+    ctx.stroke();
+    
+    // Draw text
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + badgeWidth/2, y + badgeHeight/2);
+  };
+
   // 🔥 Draw live scanning animation
-  const drawLiveScanning = (ctx, width, height, progress) => {
+  const drawLiveScanning = (ctx, width, height, progress, mode) => {
+    const isReal = mode === 'real';
+    const scanColor = isReal ? '#0ea5e9' : '#eab308';
+    const glowColor = isReal ? 'rgba(14, 165, 233, 0.3)' : 'rgba(234, 179, 8, 0.3)';
+    
     // Animated ridges
     const time = Date.now() / 1000;
     ctx.save();
@@ -205,7 +248,7 @@ export const FingerprintVisualizer = ({
     const scanY = (progress / 100) * height;
     const gradient = ctx.createLinearGradient(0, scanY - 30, 0, scanY + 30);
     gradient.addColorStop(0, 'rgba(14, 165, 233, 0)');
-    gradient.addColorStop(0.5, 'rgba(14, 165, 233, 0.3)');
+    gradient.addColorStop(0.5, glowColor);
     gradient.addColorStop(1, 'rgba(14, 165, 233, 0)');
     ctx.fillStyle = gradient;
     ctx.fillRect(0, scanY - 30, width, 60);
@@ -214,18 +257,28 @@ export const FingerprintVisualizer = ({
     ctx.beginPath();
     ctx.moveTo(0, scanY);
     ctx.lineTo(width, scanY);
-    ctx.strokeStyle = '#0ea5e9';
+    ctx.strokeStyle = scanColor;
     ctx.lineWidth = 2;
-    ctx.shadowColor = '#0ea5e9';
+    ctx.shadowColor = scanColor;
     ctx.shadowBlur = 20;
     ctx.stroke();
     ctx.shadowBlur = 0;
+
+    // Mode label on scan line
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      isReal ? '🔴 REAL SCANNER' : '🟡 SIMULATED',
+      width/2, 
+      Math.min(scanY - 10, height - 20)
+    );
 
     // Progress text
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`🔄 Capturing... ${Math.round(progress)}%`, width/2, height - 20);
+    ctx.fillText(`🔄 Scanning... ${Math.round(progress)}%`, width/2, height - 20);
 
     ctx.restore();
   };
@@ -243,6 +296,22 @@ export const FingerprintVisualizer = ({
     ctx.fillText('Place finger on scanner', width/2, height/2 + 50);
   };
 
+  // Helper for roundRect
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    this.moveTo(x + r, y);
+    this.lineTo(x + w - r, y);
+    this.quadraticCurveTo(x + w, y, x + w, y + r);
+    this.lineTo(x + w, y + h - r);
+    this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    this.lineTo(x + r, y + h);
+    this.quadraticCurveTo(x, y + h, x, y + h - r);
+    this.lineTo(x, y + r);
+    this.quadraticCurveTo(x, y, x + r, y);
+    return this;
+  };
+
   return (
     <div className={`relative ${className}`}>
       <canvas
@@ -255,22 +324,47 @@ export const FingerprintVisualizer = ({
       
       {/* 🔥 Status overlays */}
       {isCapturing && (
-        <div className="absolute top-4 right-4">
-          <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/20 rounded-full border border-blue-500/30">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            <span className="text-xs text-blue-300">LIVE</span>
+        <div className="absolute top-4 left-4">
+          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+            mode === 'real' 
+              ? 'bg-green-500/20 border-green-500/30' 
+              : 'bg-yellow-500/20 border-yellow-500/30'
+          }`}>
+            <div className={`w-2 h-2 rounded-full ${
+              mode === 'real' ? 'bg-green-500' : 'bg-yellow-500'
+            } animate-pulse`} />
+            <span className={`text-xs font-bold ${
+              mode === 'real' ? 'text-green-300' : 'text-yellow-300'
+            }`}>
+              {mode === 'real' ? '🔴 REAL' : '🟡 SIMULATED'}
+            </span>
           </div>
         </div>
       )}
       
       {imageData && (
-        <div className="absolute top-4 left-4">
+        <div className="absolute top-4 right-4">
           <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 rounded-full border border-green-500/30">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-xs text-green-300">✓ CAPTURED</span>
+            <span className="text-xs text-green-300 font-bold">✓ CAPTURED</span>
+          </div>
+        </div>
+      )}
+
+      {/* Source label overlay when not capturing */}
+      {!isCapturing && !imageData && (
+        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2">
+          <div className={`px-4 py-2 rounded-full text-xs font-bold ${
+            mode === 'real' 
+              ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
+              : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
+          }`}>
+            {sourceLabel}
           </div>
         </div>
       )}
     </div>
   );
 };
+
+export default FingerprintVisualizer;

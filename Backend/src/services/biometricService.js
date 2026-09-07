@@ -6,9 +6,15 @@ const zlib = require('zlib');
 const EncryptionService = require('./encryptionService');
 const { FINGER_TYPES, QUALITY_THRESHOLDS, SCANNER } = require('../config/biometric');
 
-// ============================================
-// PURE JS BIOMETRIC SERVICE (No Native Dependencies)
-// ============================================
+// ✅ Load Futronic SDK if available
+let FutronicSDK = null;
+try {
+  FutronicSDK = require('../addons/futronic.node');
+  console.log('✅ Futronic SDK loaded successfully');
+} catch (error) {
+  console.warn('⚠️ Futronic SDK not available, using simulated mode:', error.message);
+}
+
 class BiometricService {
   constructor() {
     this.isReady = false;
@@ -18,6 +24,9 @@ class BiometricService {
     this.scannerStatus = 'offline';
     this.initialized = false;
     this.isSimulated = true;
+    this.futronicSDK = null;
+    this.captureSource = 'simulated';
+    this.deviceInfo = null;
     
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {
@@ -30,37 +39,113 @@ class BiometricService {
 
   async initialize() {
     console.log('🔍 Initializing Biometric Service...');
+    console.log('📡 Current Environment: NODE_ENV =', process.env.NODE_ENV);
+    console.log('📡 Scanner Enabled:', process.env.SCANNER_ENABLED);
+    console.log('📡 SDK Path:', process.env.SCANNER_SDK_PATH);
     
     try {
-      // ✅ Check for physical scanner (optional - can be expanded)
+      // ✅ Check for physical scanner
       const hasPhysicalScanner = await this.detectPhysicalScanner();
+      console.log(`🔍 Physical scanner detection result: ${hasPhysicalScanner}`);
       
       if (hasPhysicalScanner && process.env.SCANNER_ENABLED !== 'false') {
         console.log('✅ Physical scanner detected');
-        this.scannerType = 'futronic';
-        this.scannerStatus = 'online';
-        this.isSimulated = false;
+        
+        // ✅ Try to initialize Futronic SDK
+        try {
+          if (FutronicSDK) {
+            console.log('🔧 Initializing Futronic SDK...');
+            const initResult = await FutronicSDK.initialize();
+            console.log(`🔧 SDK initialization result: ${initResult}`);
+            
+            if (initResult) {
+              console.log('🔍 Enumerating devices...');
+              const devices = await FutronicSDK.enumerateDevices();
+              console.log(`🔍 Found ${devices} device(s)`);
+              
+              if (devices > 0) {
+                console.log('🔌 Opening device...');
+                const opened = await FutronicSDK.openDevice(0);
+                console.log(`🔌 Device open result: ${opened}`);
+                
+                if (opened) {
+                  this.scannerType = 'futronic';
+                  this.scannerStatus = 'online';
+                  this.isSimulated = false;
+                  this.futronicSDK = FutronicSDK;
+                  this.sdkVersion = FutronicSDK.getVersion();
+                  this.captureSource = 'real_device';
+                  
+                  // Get device info
+                  try {
+                    const deviceInfo = await FutronicSDK.getDeviceInfo();
+                    this.deviceInfo = deviceInfo;
+                    console.log('✅ Futronic scanner initialized and ready');
+                    console.log(`📱 Device: ${deviceInfo.Manufacturer} ${deviceInfo.Model}`);
+                    console.log(`🔢 Serial: ${deviceInfo.SerialNumber}`);
+                    console.log(`📡 SDK Version: ${this.sdkVersion}`);
+                  } catch (error) {
+                    console.warn('⚠️ Could not get device info:', error.message);
+                  }
+                } else {
+                  console.warn('⚠️ Failed to open Futronic device, falling back to simulated');
+                  this.isSimulated = true;
+                  this.captureSource = 'simulated';
+                }
+              } else {
+                console.warn('⚠️ No Futronic devices found, falling back to simulated');
+                this.isSimulated = true;
+                this.captureSource = 'simulated';
+              }
+            } else {
+              console.warn('⚠️ Futronic SDK initialization failed, falling back to simulated');
+              this.isSimulated = true;
+              this.captureSource = 'simulated';
+            }
+          } else {
+            console.warn('⚠️ Futronic SDK not loaded, falling back to simulated');
+            this.isSimulated = true;
+            this.captureSource = 'simulated';
+          }
+        } catch (error) {
+          console.error('❌ Futronic SDK error:', error.message);
+          console.error('❌ Stack trace:', error.stack);
+          this.isSimulated = true;
+          this.captureSource = 'simulated';
+        }
       } else {
         console.log('⚠️ No physical scanner detected - using simulated mode');
-        this.scannerType = 'simulated';
-        this.scannerStatus = 'simulated';
+        if (!hasPhysicalScanner) {
+          console.log('💡 Reasons: No USB device found or scanner not connected');
+        }
+        if (process.env.SCANNER_ENABLED === 'false') {
+          console.log('💡 Scanner disabled via environment variable');
+        }
         this.isSimulated = true;
+        this.captureSource = 'simulated';
       }
       
       this.isReady = true;
       this.initialized = true;
-      this.sdkVersion = this.isSimulated ? 'simulated-1.0.0' : 'futronic-1.0.0';
       
-      console.log(`✅ Biometric service ready (${this.scannerType} mode)`);
+      if (!this.isSimulated) {
+        console.log(`✅ Biometric service ready with ${this.scannerType} (${this.sdkVersion})`);
+        console.log(`✅ CAPTURE SOURCE: REAL DEVICE`);
+      } else {
+        console.log('✅ Biometric service ready in SIMULATED mode');
+        console.log(`✅ CAPTURE SOURCE: SIMULATED (${this.captureSource})`);
+      }
       return true;
       
     } catch (error) {
       console.error('❌ Biometric initialization failed:', error.message);
+      console.error('❌ Stack trace:', error.stack);
       // Always fallback to simulated
       this.scannerType = 'simulated';
       this.scannerStatus = 'simulated';
       this.isReady = true;
       this.isSimulated = true;
+      this.captureSource = 'simulated';
       this.sdkVersion = 'simulated-1.0.0';
       console.log('⚠️ Falling back to simulated mode');
       return true;
@@ -72,18 +157,43 @@ class BiometricService {
       // Simple USB device detection using PowerShell (Windows)
       const { exec } = require('child_process');
       return new Promise((resolve) => {
-        exec('powershell -Command "Get-PnpDevice -PresentOnly | Where-Object { $_.FriendlyName -match \'fingerprint|finger|biometric\' } | Measure-Object | Select-Object -ExpandProperty Count"', 
-          (error, stdout) => {
-            if (error) {
-              resolve(false);
-              return;
+        // Check for Futronic specifically
+        const commands = [
+          'powershell -Command "Get-PnpDevice -PresentOnly | Where-Object { $_.FriendlyName -match \'fingerprint|finger|biometric|Futronic\' } | Measure-Object | Select-Object -ExpandProperty Count"',
+          'powershell -Command "Get-PnpDevice -PresentOnly | Where-Object { $_.FriendlyName -match \'Futronic\' } | Measure-Object | Select-Object -ExpandProperty Count"'
+        ];
+        
+        let executed = 0;
+        let found = false;
+        
+        commands.forEach(cmd => {
+          exec(cmd, (error, stdout) => {
+            executed++;
+            if (!error && !found) {
+              const count = parseInt(stdout.trim()) || 0;
+              if (count > 0) {
+                found = true;
+                resolve(true);
+              }
             }
-            const count = parseInt(stdout.trim()) || 0;
-            resolve(count > 0);
-          }
-        );
+            if (executed === commands.length && !found) {
+              // Also check if SCANNER_SDK_PATH exists
+              const sdkPath = process.env.SCANNER_SDK_PATH;
+              if (sdkPath && fs.existsSync(sdkPath)) {
+                console.log('📁 SDK path exists, but no device found');
+              }
+              resolve(false);
+            }
+          });
+        });
+        
+        // Timeout fallback
+        setTimeout(() => {
+          if (!found) resolve(false);
+        }, 3000);
       });
-    } catch {
+    } catch (error) {
+      console.error('Device detection error:', error);
       return false;
     }
   }
@@ -97,21 +207,17 @@ class BiometricService {
       isSimulated: this.isSimulated,
       isFutronic: !this.isSimulated,
       initialized: this.initialized,
-      deviceInfo: this.isSimulated ? {
-        Manufacturer: 'Simulated Scanner',
-        Model: 'Simulated Model',
-        SerialNumber: 'SIM-001',
-        FirmwareVersion: '1.0.0'
-      } : {
-        Manufacturer: 'Futronic',
-        Model: 'FS80',
-        SerialNumber: 'Unknown',
-        FirmwareVersion: '1.0.0'
+      captureSource: this.captureSource,
+      deviceInfo: this.deviceInfo || {
+        Manufacturer: this.isSimulated ? 'Simulated Scanner' : 'Futronic',
+        Model: this.isSimulated ? 'Simulated Model' : 'FS80',
+        SerialNumber: this.isSimulated ? 'SIM-001' : 'Unknown',
+        FirmwareVersion: this.sdkVersion || '1.0.0'
       }
     };
   }
 
-  async captureFingerprint(fingerType = 'right_thumb', onProgress, timeout = SCANNER.TIMEOUT || 60000) {
+  async captureFingerprint(fingerType = 'right_thumb', onProgress, timeout = SCANNER.TIMEOUT || 30000) {
     try {
       if (!this.isReady) {
         await this.initialize();
@@ -125,43 +231,83 @@ class BiometricService {
       // Start capture progress
       onProgress?.({ status: 'initializing', progress: 5, message: 'Initializing scanner...' });
 
-      // ✅ Always use simulated capture (no native dependencies)
-      const result = await this.simulateCapture(fingerType, onProgress);
+      // ✅ CHECK: Use real scanner if available
+      if (!this.isSimulated && this.futronicSDK) {
+        console.log(`🔴 USING REAL SCANNER for ${fingerType}`);
+        console.log(`📱 Device: ${this.deviceInfo?.Manufacturer} ${this.deviceInfo?.Model}`);
+        
+        try {
+          onProgress?.({ status: 'scanning', progress: 20, message: 'Please place your finger on the scanner...' });
+          
+          // ✅ Capture from real device
+          const result = await this.futronicSDK.captureFingerprint(timeout);
+          
+          onProgress?.({ status: 'processing', progress: 70, message: 'Processing fingerprint...' });
+          
+          if (!result.success) {
+            throw new Error(result.error || 'Real scanner capture failed');
+          }
 
-      // Validate quality
-      const qualityThreshold = parseInt(process.env.SCANNER_QUALITY_THRESHOLD) || 70;
-      if (result.quality < qualityThreshold) {
-        throw new Error(`Poor quality fingerprint (${result.quality}%). Please clean finger and try again.`);
+          // Validate quality
+          const qualityThreshold = parseInt(process.env.SCANNER_QUALITY_THRESHOLD) || 70;
+          if (result.quality.overall < qualityThreshold) {
+            throw new Error(`Poor quality fingerprint (${result.quality.overall}%). Please clean finger and try again.`);
+          }
+
+          console.log(`✅ Real fingerprint captured: Quality ${result.quality.overall}%, ${result.quality.minutiaeCount || 0} minutiae`);
+          console.log(`🔍 Capture source: REAL DEVICE`);
+
+          return {
+            success: true,
+            fingerType,
+            template: result.template.data, // Already base64
+            quality: result.quality.overall,
+            metrics: {
+              imageClarity: result.quality.imageClarity || result.quality.overall,
+              minutiaePoints: result.quality.minutiaeCount || 0,
+              livenessCheck: result.liveness.isLive || false,
+              overallQuality: result.quality.overall,
+              nfiq: result.quality.nfiq || 1
+            },
+            imageData: result.image.data || null,
+            minutiae: [],
+            liveness: result.liveness || { isLive: true, score: 0.95 },
+            deviceInfo: {
+              manufacturer: 'Futronic',
+              model: this.deviceInfo?.Model || 'FS80',
+              sdkVersion: this.sdkVersion
+            },
+            timestamp: new Date().toISOString(),
+            source: 'real_device',
+            sourceLabel: '🟢 REAL SCANNER'
+          };
+
+        } catch (error) {
+          console.error('❌ Real scanner capture failed:', error.message);
+          console.log('⚠️ Falling back to simulated capture...');
+          // ✅ Fallback to simulated if real device fails
+          return this.simulateCapture(fingerType, onProgress, 'fallback_after_real_failure');
+        }
       }
 
-      // Compress template
-      const compressed = this.compressTemplate(result.template);
-
-      return {
-        success: true,
-        fingerType,
-        template: compressed,
-        quality: result.quality,
-        metrics: result.metrics || this.calculateQualityMetrics(result),
-        imageData: result.imageData || null,
-        minutiae: result.minutiae || [],
-        liveness: result.liveness || { isLive: true, score: 0.95 },
-        timestamp: new Date().toISOString()
-      };
+      // ✅ Fallback to simulated
+      console.log('🟡 Using SIMULATED fingerprint capture');
+      console.log(`📌 Source: ${this.captureSource}`);
+      return this.simulateCapture(fingerType, onProgress, 'simulated');
 
     } catch (error) {
-      console.error('Fingerprint capture failed:', error);
+      console.error('❌ Fingerprint capture failed:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        source: 'error'
       };
     }
   }
 
-  // ============================================
-  // SIMULATED CAPTURE (Fully Working)
-  // ============================================
-  async simulateCapture(fingerType, onProgress) {
+  async simulateCapture(fingerType, onProgress, source = 'simulated') {
+    console.log(`🟡 Simulating fingerprint capture (source: ${source})`);
+    
     const steps = [
       { status: 'initializing', progress: 10, message: 'Initializing scanner...' },
       { status: 'scanning', progress: 25, message: 'Waiting for finger...' },
@@ -197,7 +343,8 @@ class BiometricService {
       minutiae: minutiae,
       fingerType,
       imageQuality: quality,
-      capturedAt: new Date().toISOString()
+      capturedAt: new Date().toISOString(),
+      source: source
     });
 
     return {
@@ -215,13 +362,46 @@ class BiometricService {
       liveness: {
         isLive: true,
         score: 0.95
-      }
+      },
+      source: source,
+      sourceLabel: source === 'real_device' ? '🟢 REAL SCANNER' : '🟡 SIMULATED'
     };
   }
 
+  // ✅ Add method to get device info
+  async getDeviceInfo() {
+    if (!this.isSimulated && this.futronicSDK) {
+      try {
+        return await this.futronicSDK.getDeviceInfo();
+      } catch (error) {
+        console.error('Failed to get device info:', error);
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async cleanup() {
+    if (this.futronicSDK) {
+      try {
+        await this.futronicSDK.closeDevice();
+      } catch (error) {
+        console.error('Cleanup error:', error);
+      }
+    }
+    this.isReady = false;
+    this.initialized = false;
+    console.log('✅ Biometric service cleaned up');
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   // ============================================
-  // FINGERPRINT VERIFICATION
+  // VERIFICATION FUNCTIONS
   // ============================================
+  
   async verifyFingerprint(providedTemplate, storedFingerprint, userId) {
     try {
       // Decrypt stored template
@@ -262,10 +442,6 @@ class BiometricService {
       };
     }
   }
-
-  // ============================================
-  // UTILITY FUNCTIONS
-  // ============================================
 
   matchFingerprints(template1, template2) {
     if (!template1 || !template2) {
@@ -336,59 +512,27 @@ class BiometricService {
     }
   }
 
-  calculateQualityMetrics(data) {
-    const quality = data.quality || 70;
-    const minutiaeCount = data.minutiae?.length || 50;
-
-    return {
-      imageClarity: Math.min(100, quality + 10),
-      minutiaePoints: minutiaeCount,
-      livenessCheck: true,
-      overallQuality: quality,
-      nfiq: quality > 85 ? 1 : quality > 70 ? 2 : 3
-    };
-  }
-
-  compressTemplate(template) {
-    try {
-      const buffer = Buffer.from(template);
-      const compressed = zlib.gzipSync(buffer, { level: 9 });
-      return compressed.toString('base64');
-    } catch (error) {
-      console.error('Compression error:', error);
-      return template;
-    }
-  }
-
-  decompressTemplate(compressed) {
-    try {
-      const buffer = Buffer.from(compressed, 'base64');
-      const decompressed = zlib.gunzipSync(buffer);
-      return decompressed.toString();
-    } catch (error) {
-      console.error('Decompression error:', error);
-      return compressed;
-    }
-  }
-
   async getLivePreview() {
-    // Simulated live preview
+    if (!this.isSimulated && this.futronicSDK) {
+      try {
+        const preview = await this.futronicSDK.getLivePreview();
+        return preview;
+      } catch (error) {
+        console.error('Live preview error:', error);
+        return {
+          imageData: Buffer.from('simulated_preview').toString('base64'),
+          width: 400,
+          height: 400,
+          resolution: 500
+        };
+      }
+    }
     return {
       imageData: Buffer.from('simulated_preview').toString('base64'),
       width: 400,
       height: 400,
       resolution: 500
     };
-  }
-
-  async cleanup() {
-    this.isReady = false;
-    this.initialized = false;
-    console.log('✅ Biometric service cleaned up');
-  }
-
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
