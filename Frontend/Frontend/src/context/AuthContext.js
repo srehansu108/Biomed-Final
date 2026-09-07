@@ -1,4 +1,4 @@
-// client/src/context/AuthContext.js
+// client/src/context/AuthContext.js - ENHANCED ERROR HANDLING
 
 import React, { createContext, useState, useEffect } from 'react';
 import axiosInstance from '../api/axiosConfig';
@@ -72,10 +72,13 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // ✅ Register
+  // ✅ Register - COMPLETE FIXED VERSION WITH BETTER ERROR HANDLING
   const register = async (userData) => {
     try {
       const formData = new FormData();
+      let totalDataSize = 0;
+      
+      console.log('📤 Building registration form data...');
       
       // Add all fields to formData
       Object.keys(userData).forEach(key => {
@@ -83,23 +86,59 @@ export const AuthProvider = ({ children }) => {
         
         // ✅ Skip empty strings, null, undefined
         if (value === '' || value === null || value === undefined) {
+          console.log(`⏭️ Skipping ${key} (empty/null/undefined)`);
+          return;
+        }
+        
+        // ✅ Skip empty arrays
+        if (Array.isArray(value) && value.length === 0) {
+          console.log(`⏭️ Skipping ${key} (empty array)`);
+          return;
+        }
+        
+        // ✅ Skip empty objects
+        if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof File) && Object.keys(value).length === 0) {
+          console.log(`⏭️ Skipping ${key} (empty object)`);
           return;
         }
         
         if (key === 'fingerprints') {
-          formData.append(key, JSON.stringify(value));
+          const jsonStr = JSON.stringify(value);
+          totalDataSize += jsonStr.length;
+          formData.append(key, jsonStr);
+          console.log(`📊 ${key}: ${Object.keys(value).length} fingers, ${(jsonStr.length / 1024).toFixed(2)} KB`);
         } else if (key === 'languages' || key === 'idProofType') {
-          formData.append(key, JSON.stringify(value));
+          const jsonStr = JSON.stringify(value);
+          totalDataSize += jsonStr.length;
+          formData.append(key, jsonStr);
+          console.log(`📊 ${key}: ${(jsonStr.length / 1024).toFixed(2)} KB`);
         } else if (key === 'profilePhoto' && value instanceof File) {
           formData.append('profilePhoto', value);
+          totalDataSize += value.size;
+          console.log(`📸 profilePhoto: ${value.name} (${(value.size / 1024).toFixed(2)} KB)`);
+        } else if (key === 'profileImage' && typeof value === 'string' && value.startsWith('data:image')) {
+          // ✅ Handle base64 image as fallback
+          formData.append('profileImage', value);
+          totalDataSize += value.length;
+          console.log(`📸 profileImage: base64 string (${(value.length / 1024).toFixed(2)} KB)`);
         } else if (key === 'documents' && Array.isArray(value)) {
           value.forEach(file => {
             formData.append('documents', file);
+            totalDataSize += file.size;
+            console.log(`📄 document: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
           });
         } else {
-          formData.append(key, String(value));
+          // For all other fields, convert to string
+          const strValue = String(value);
+          totalDataSize += strValue.length;
+          formData.append(key, strValue);
+          console.log(`📝 ${key}: ${strValue.substring(0, 50)}${strValue.length > 50 ? '...' : ''}`);
         }
       });
+
+      console.log(`📦 Total request size: ${(totalDataSize / 1024).toFixed(2)} KB`);
+      console.log('📤 Sending registration request...');
+      const startTime = Date.now();
 
       const response = await axiosInstance.post(
         '/auth/register/volunteer',
@@ -108,9 +147,18 @@ export const AuthProvider = ({ children }) => {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
-          timeout: 60000,
+          timeout: 120000, // ✅ Increased to 2 minutes
+          maxContentLength: 50 * 1024 * 1024, // 50MB
+          maxBodyLength: 50 * 1024 * 1024, // 50MB
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`📤 Upload progress: ${percentCompleted}%`);
+          },
         }
       );
+
+      const elapsed = Date.now() - startTime;
+      console.log(`✅ Registration completed in ${elapsed}ms`);
 
       const { user: userData_, tokens } = response.data.data;
 
@@ -124,23 +172,52 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('❌ Registration error:', error);
       
+      // ✅ Better error handling for timeouts
+      if (error.code === 'ECONNABORTED') {
+        console.error('⏰ Request timed out after 2 minutes');
+        throw new Error('Registration request timed out after 2 minutes. Please try again.');
+      }
+      
       if (error.response) {
         let errorMessage = 'Registration failed. Please check your input.';
         
-        if (error.response.data?.errors) {
-          const errorsData = error.response.data.errors;
-          if (Array.isArray(errorsData)) {
-            const errorMessages = errorsData.map(e => 
-              `${e.field}: ${e.message}`
-            ).join('; ');
-            errorMessage = `Validation failed: ${errorMessages}`;
-          } else if (errorsData.errors && Array.isArray(errorsData.errors)) {
-            const errorMessages = errorsData.errors.map(e => 
-              `${e.field}: ${e.message}`
-            ).join('; ');
-            errorMessage = `Validation failed: ${errorMessages}`;
+        // ✅ Handle 409 Conflict (duplicate phone/email)
+        if (error.response.status === 409) {
+          if (error.response.data?.message) {
+            errorMessage = error.response.data.message;
+          } else if (error.response.data?.errors) {
+            const errorsData = error.response.data.errors;
+            if (Array.isArray(errorsData)) {
+              const errorMessages = errorsData.map(e => 
+                `${e.field}: ${e.message}`
+              ).join('; ');
+              errorMessage = `Conflict: ${errorMessages}`;
+            }
+          } else {
+            errorMessage = 'A record with this information already exists. Please check your phone number or email.';
           }
-        } else if (error.response.data?.message) {
+        }
+        // ✅ Handle validation errors
+        else if (error.response.status === 400) {
+          if (error.response.data?.errors) {
+            const errorsData = error.response.data.errors;
+            if (Array.isArray(errorsData)) {
+              const errorMessages = errorsData.map(e => 
+                `${e.field}: ${e.message}`
+              ).join('; ');
+              errorMessage = `Validation failed: ${errorMessages}`;
+            } else if (errorsData.errors && Array.isArray(errorsData.errors)) {
+              const errorMessages = errorsData.errors.map(e => 
+                `${e.field}: ${e.message}`
+              ).join('; ');
+              errorMessage = `Validation failed: ${errorMessages}`;
+            }
+          } else if (error.response.data?.message) {
+            errorMessage = error.response.data.message;
+          }
+        }
+        // ✅ Handle other server errors
+        else if (error.response.data?.message) {
           errorMessage = error.response.data.message;
         }
         

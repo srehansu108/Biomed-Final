@@ -1,4 +1,4 @@
-// client/src/pages/Register/Register.jsx - FULLY FIXED
+// client/src/pages/Register/Register.jsx - UPDATED WITH IMPROVED ERROR HANDLING
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -8,12 +8,32 @@ import { Alert } from '../../components/common/Alert';
 import Step1Details from './Step1Details';
 import Step2Biometrics from './Step2Biometrics';
 
+// ✅ Utility: Convert base64 data URL to File object
+const dataURLtoFile = (dataURL, filename = 'profile.jpg') => {
+  if (!dataURL) return null;
+  try {
+    const arr = dataURL.split(',');
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    if (!mimeMatch) return null;
+    const mime = mimeMatch[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) u8arr[n] = bstr.charCodeAt(n);
+    return new File([u8arr], filename, { type: mime });
+  } catch (error) {
+    console.error('Error converting data URL to file:', error);
+    return null;
+  }
+};
+
 const Register = () => {
   const navigate = useNavigate();
   const { register } = useAuth();
   const [step, setStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [errorType, setErrorType] = useState(''); // 'phone', 'general', etc.
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -51,41 +71,74 @@ const Register = () => {
 
   const handleNextStep = () => {
     setStep(2);
+    setError(''); // Clear error when moving forward
+    setErrorType('');
+  };
+
+  // ✅ Handle going back to step 1 with a specific error message
+  const handleGoBackWithError = (message, type = 'general') => {
+    setError(message);
+    setErrorType(type);
+    setStep(1);
   };
 
   const handleBiometricsComplete = async (data) => {
     setIsLoading(true);
     setError('');
+    setErrorType('');
 
     try {
+      // ✅ Convert profileImage (base64) to File if it exists
+      let profilePhotoFile = null;
+      if (data.profileImage) {
+        profilePhotoFile = dataURLtoFile(data.profileImage, 'profile_photo.jpg');
+        if (!profilePhotoFile) {
+          console.warn('⚠️ Failed to convert profile image to file, sending as base64 string');
+        }
+      }
+
       // ✅ Prepare registration data
       const registrationData = {
         ...formData,
         fingerprints: data.fingerprints || {},
-        profilePhoto: data.profileImage ? null : formData.profilePhoto,
-        profileImage: data.profileImage || null,
+        // ✅ Send as File if converted, otherwise send as base64 string
+        profilePhoto: profilePhotoFile || data.profileImage || null,
         // ✅ CRITICAL: Send null instead of empty string for optional fields
         alternatePhone: formData.alternatePhone?.trim() || null,
         languageNotes: formData.languageNotes?.trim() || null,
         remarks: formData.remarks?.trim() || null,
+        // ✅ Ensure phone is properly formatted
+        phone: formData.phone?.trim() || '',
       };
 
-      // ✅ Log data before sending
-      console.log('📤 Registration data:', {
+      // ✅ Log data before sending (exclude sensitive data)
+      console.log('📤 Registration data summary:', {
         firstName: registrationData.firstName,
         lastName: registrationData.lastName,
         phone: registrationData.phone,
-        alternatePhone: registrationData.alternatePhone,
         fingerprintsCount: Object.keys(registrationData.fingerprints).length,
-        languages: Object.keys(registrationData.languages)
+        hasProfilePhoto: !!registrationData.profilePhoto,
+        languages: Object.keys(registrationData.languages || {})
       });
 
       await register(registrationData);
       navigate('/dashboard');
       
     } catch (err) {
-      console.error('Registration failed:', err);
-      setError(err.message || 'Registration failed. Please try again.');
+      console.error('❌ Registration failed:', err);
+      const errorMessage = err.message || 'Registration failed. Please try again.';
+      setError(errorMessage);
+      
+      // ✅ Detect phone-related errors
+      if (errorMessage.toLowerCase().includes('phone') || 
+          errorMessage.toLowerCase().includes('already registered')) {
+        setErrorType('phone');
+        // ✅ Auto-navigate back to step 1 with a clear message
+        setError('⚠️ This phone number is already registered. Please use a different phone number.');
+        setStep(1);
+      } else {
+        setErrorType('general');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -94,8 +147,31 @@ const Register = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <Card className="max-w-6xl w-full">
-        {error && (
-          <Alert type="error" message={error} className="mb-4" />
+        {/* ✅ Global error display */}
+        {error && step === 2 && (
+          <Alert 
+            type="error" 
+            message={error} 
+            className="mb-4"
+            onClose={() => setError('')}
+          />
+        )}
+
+        {/* ✅ Special error display for phone conflicts with action button */}
+        {error && step === 1 && errorType === 'phone' && (
+          <Alert 
+            type="error" 
+            message={error}
+            className="mb-4"
+            onClose={() => {
+              setError('');
+              setErrorType('');
+            }}
+          >
+            <div className="mt-2 text-sm text-red-700">
+              Please change your phone number and try again.
+            </div>
+          </Alert>
         )}
 
         <div className="mb-6">
@@ -117,13 +193,20 @@ const Register = () => {
             setFormData={setFormData}
             onNext={handleNextStep}
             isLoading={isLoading}
+            // ✅ Pass error to Step1 for display
+            error={errorType === 'phone' ? error : ''}
           />
         ) : (
           <Step2Biometrics
             formData={formData}
             onSubmit={handleBiometricsComplete}
-            onBack={() => setStep(1)}
+            onBack={() => {
+              setError('');
+              setErrorType('');
+              setStep(1);
+            }}
             isLoading={isLoading}
+            error={error}
           />
         )}
       </Card>

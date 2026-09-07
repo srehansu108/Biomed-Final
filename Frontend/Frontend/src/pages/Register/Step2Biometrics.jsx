@@ -1,4 +1,5 @@
-// client/src/pages/Register/Step2Biometrics.jsx - COMPLETE FINAL VERSION
+// client/src/pages/Register/Step2Biometrics.jsx - UPDATED WITH ERROR PROP
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { FiveFingerCapture } from '../../components/fingerprint/FiveFingerCapture';
@@ -8,7 +9,7 @@ import { Card } from '../../components/common/Card';
 import { Spinner } from '../../components/common/Spinner';
 import { Alert } from '../../components/common/Alert';
 
-const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
+const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading, error: propError }) => {
   const [fingers, setFingers] = useState({});
   const [webcamImage, setWebcamImage] = useState(null);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -19,6 +20,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [captureStatus, setCaptureStatus] = useState('Ready to capture biometrics');
   const [fingerError, setFingerError] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
   
   const webcamRef = useRef(null);
 
@@ -30,6 +32,14 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     'right_little'
   ];
 
+  // ✅ Sync external error
+  useEffect(() => {
+    if (propError) {
+      setSubmitError(propError);
+      setCaptureStatus(`❌ ${propError}`);
+    }
+  }, [propError]);
+
   // ✅ Handle fingerprint progress updates
   const handleFingerprintProgress = useCallback((data) => {
     console.log('📊 Fingerprint progress:', data);
@@ -37,6 +47,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     setCapturedCount(data.capturedCount || 0);
     setFingers(data.capturedFingers || {});
     setCaptureStatus(data.status || 'Capturing fingerprints...');
+    setSubmitError(null); // Clear any previous submit errors
     
     if (data.capturedCount === 5) {
       setCaptureStatus('✅ All fingerprints captured!');
@@ -51,6 +62,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     setCaptureProgress(100);
     setCaptureStatus('✅ All fingerprints captured!');
     setFingerError(null);
+    setSubmitError(null);
   }, []);
 
   // ✅ Handle fingerprint error
@@ -64,6 +76,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
   const captureWebcam = useCallback(() => {
     if (webcamRef.current) {
       setIsImageLoading(true);
+      setSubmitError(null);
       try {
         const imageSrc = webcamRef.current.getScreenshot();
         if (imageSrc) {
@@ -87,6 +100,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     setWebcamImage(null);
     setWebcamError(null);
     setCaptureStatus('Ready to capture profile photo');
+    setSubmitError(null);
   }, []);
 
   // ✅ Handle webcam ready
@@ -130,27 +144,44 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
   }, [allFingersCaptured, capturedCount, webcamImage]);
 
   // ✅ Handle final submit
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     const validation = getSubmitValidation();
-    
     if (!validation.valid) {
       setCaptureStatus(`❌ ${validation.message}`);
+      setSubmitError(validation.message);
       return;
     }
 
-    console.log('🔐 Submitting biometrics:', {
-      fingers: Object.keys(fingers),
-      hasWebcamImage: !!webcamImage,
-      fingerCount: Object.keys(fingers).length
-    });
+    setSubmitError(null);
+    setCaptureStatus('⏳ Submitting registration data...');
+    console.log('🔐 Submitting biometrics...');
 
-    // Prepare data for submission
     const submissionData = {
       fingerprints: fingers,
       profileImage: webcamImage,
     };
 
-    onSubmit(submissionData);
+    // ✅ Show progress in status
+    const progressInterval = setInterval(() => {
+      setCaptureStatus(prev => {
+        if (prev.includes('✅') || prev.includes('❌')) return prev;
+        const dots = prev.match(/\./g)?.length || 0;
+        const newDots = (dots % 3) + 1;
+        return `⏳ Submitting registration data${'.'.repeat(newDots)}`;
+      });
+    }, 500);
+
+    try {
+      await onSubmit(submissionData);
+      clearInterval(progressInterval);
+      setCaptureStatus('✅ Registration completed!');
+    } catch (error) {
+      clearInterval(progressInterval);
+      const errorMsg = error.message || 'Registration failed';
+      setSubmitError(errorMsg);
+      setCaptureStatus(`❌ ${errorMsg}`);
+      throw error;
+    }
   }, [fingers, webcamImage, onSubmit, getSubmitValidation]);
 
   // ✅ Reset all biometrics
@@ -162,6 +193,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     setCaptureStatus('Ready to capture biometrics');
     setFingerError(null);
     setWebcamError(null);
+    setSubmitError(null);
   }, []);
 
   // ✅ Retry fingerprint capture
@@ -171,6 +203,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
     setCapturedCount(0);
     setFingerError(null);
     setCaptureStatus('Retrying fingerprint capture...');
+    setSubmitError(null);
   }, []);
 
   return (
@@ -189,6 +222,10 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
           }`}>
             {captureStatus}
           </p>
+        )}
+        {/* ✅ Display submit errors */}
+        {submitError && (
+          <Alert type="error" message={submitError} className="mt-2" />
         )}
         {fingerError && (
           <Alert type="error" message={fingerError} className="mt-2" />
@@ -474,7 +511,7 @@ const Step2Biometrics = ({ formData, onSubmit, onBack, isLoading }) => {
           </div>
 
           {/* Validation Message */}
-          {(!allFingersCaptured || !webcamImage) && !isLoading && (
+          {(!allFingersCaptured || !webcamImage) && !isLoading && !submitError && (
             <div className="text-xs text-yellow-600 text-center">
               {!allFingersCaptured && !webcamImage && '⚠️ Please capture all 5 fingerprints and a profile photo'}
               {!allFingersCaptured && webcamImage && `⚠️ Please capture ${5 - capturedCount} more fingerprint(s)`}
