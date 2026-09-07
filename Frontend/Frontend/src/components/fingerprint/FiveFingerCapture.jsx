@@ -1,11 +1,12 @@
-// client/src/components/fingerprint/FiveFingerCapture.jsx - COMPLETE FIX
+// client/src/components/fingerprint/FiveFingerCapture.jsx - WITH SCANNER MODE POPUP (FULLY FIXED)
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FingerprintVisualizer } from './FingerprintVisualizer';
 import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
 import { QualityIndicator } from './QualityIndicator';
 import { Button } from '../common/Button';
 import { Alert } from '../common/Alert';
+import { ScannerModePopup } from './ScannerModePopup';
 
 const FINGER_NAMES = {
   right_thumb: 'Right Thumb',
@@ -44,9 +45,21 @@ export const FiveFingerCapture = ({
   const [isComplete, setIsComplete] = useState(false);
   const [currentFingerData, setCurrentFingerData] = useState(null);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
+  
+  // ✅ Popup state - force show on mount
+  const [showModePopup, setShowModePopup] = useState(true);
+  const [popupClosed, setPopupClosed] = useState(false);
 
   const currentFinger = FINGER_ORDER[currentFingerIndex];
   const progress = (currentFingerIndex / FINGER_ORDER.length) * 100;
+
+  // ✅ FORCE POPUP TO SHOW ON MOUNT
+  useEffect(() => {
+    console.log('📱 FiveFingerCapture mounted - showing scanner mode popup');
+    // Reset popup state to ensure it shows
+    setShowModePopup(true);
+    setPopupClosed(false);
+  }, []);
 
   // ✅ Get scanner status display
   const getScannerDisplay = useCallback(() => {
@@ -65,28 +78,21 @@ export const FiveFingerCapture = ({
 
   const scannerDisplay = getScannerDisplay();
 
-  // ✅ Handle fingerprint data from WebSocket - FIXED
+  // ✅ Handle fingerprint data from WebSocket
   useEffect(() => {
     if (!fingerprintData) return;
 
     console.log('📥 Raw fingerprint data received:', fingerprintData);
 
-    // ✅ Extract the finger type and data
-    const fingerType = fingerprintData.fingerType || 
-                       fingerprintData.fingerType || 
-                       currentFinger;
+    const fingerType = fingerprintData.fingerType || currentFinger;
 
-    // ✅ Ensure we have the data property
     let templateData = fingerprintData.data || 
                        fingerprintData.template || 
                        fingerprintData.templateData;
 
-    // ✅ If data is base64 encoded, keep it as is
     if (templateData && typeof templateData === 'string') {
-      // Data is already a string (base64 or raw)
       console.log(`✅ Valid data found for ${fingerType}:`, templateData.substring(0, 50) + '...');
     } else if (templateData && typeof templateData === 'object') {
-      // Data is an object, convert to string
       templateData = JSON.stringify(templateData);
     } else {
       console.error(`❌ No valid data found for ${fingerType}`);
@@ -94,9 +100,8 @@ export const FiveFingerCapture = ({
       return;
     }
 
-    // ✅ Create proper fingerprint data structure
     const capturedData = {
-      data: templateData,  // ✅ This is what AuthContext expects
+      data: templateData,
       format: fingerprintData.format || 'ISO_19794_2',
       quality: fingerprintData.quality || 70,
       metrics: fingerprintData.metrics || {},
@@ -107,24 +112,20 @@ export const FiveFingerCapture = ({
     console.log(`✅ Captured ${fingerType} with quality: ${capturedData.quality}%`);
     console.log(`📊 Data length: ${capturedData.data.length} characters`);
 
-    // ✅ Store current finger data
     setCurrentFingerData(capturedData);
     
-    // ✅ Add to captured fingers
     const updatedFingers = {
       ...capturedFingers,
-      [fingerType]: capturedData,  // ✅ Structure matches AuthContext expectation
+      [fingerType]: capturedData,
     };
     setCapturedFingers(updatedFingers);
 
-    // ✅ Auto-advance to next finger
     if (!isAutoAdvancing) {
       setIsAutoAdvancing(true);
       
       const currentIndex = FINGER_ORDER.indexOf(fingerType);
       
       if (currentIndex < FINGER_ORDER.length - 1) {
-        // Move to next finger after delay
         const nextIndex = currentIndex + 1;
         setTimeout(() => {
           setCurrentFingerIndex(nextIndex);
@@ -133,10 +134,8 @@ export const FiveFingerCapture = ({
           resetFingerprintData();
         }, 1500);
       } else {
-        // All fingers captured
         setIsComplete(true);
         setTimeout(() => {
-          // ✅ Send complete data with proper structure
           console.log('🎉 All fingers captured:', updatedFingers);
           onComplete?.(updatedFingers);
         }, 500);
@@ -184,7 +183,6 @@ export const FiveFingerCapture = ({
     setCurrentFingerData(null);
     setLocalError('');
     clearError();
-    // Remove current finger from captured list
     const updated = { ...capturedFingers };
     delete updated[currentFinger];
     setCapturedFingers(updated);
@@ -208,6 +206,19 @@ export const FiveFingerCapture = ({
   // ✅ Render
   return (
     <div className={`space-y-6 ${className}`}>
+      {/* ✅ Scanner Mode Popup - Shows on mount */}
+      {showModePopup && !popupClosed && (
+        <ScannerModePopup
+          onClose={() => {
+            console.log('🔄 Popup closed by user in FiveFingerCapture');
+            setShowModePopup(false);
+            setPopupClosed(true);
+          }}
+          autoClose={true}
+          duration={8000}
+        />
+      )}
+
       {/* Scanner Status Display */}
       <div className={`p-3 rounded-lg border ${scannerDisplay.bg} border-gray-200`}>
         <div className="flex items-center justify-between">
@@ -410,3 +421,5 @@ export const FiveFingerCapture = ({
     </div>
   );
 };
+
+export default FiveFingerCapture;

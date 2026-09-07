@@ -1,4 +1,4 @@
-// client/src/pages/Login/FingerprintLogin.jsx - FIXED: real scanner capture for login
+// client/src/pages/Login/FingerprintLogin.jsx - WITH SCANNER MODE POPUP
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +10,7 @@ import { Alert } from '../../components/common/Alert';
 import { QualityIndicator } from '../../components/fingerprint/QualityIndicator';
 import { FingerprintScanner } from '../../components/fingerprint/FingerprintScanner';
 import { FingerSelector } from '../../components/fingerprint/FingerSelector';
+import { ScannerModePopup } from '../../components/fingerprint/ScannerModePopup'; // ✅ NEW IMPORT
 import axiosInstance from '../../api/axiosConfig';
 
 // ✅ Finger types with display names and icons
@@ -30,11 +31,6 @@ const FingerprintLogin = () => {
   const navigate = useNavigate();
   const { loginWithFingerprint: authLoginWithFingerprint, isAuthenticated } = useAuth();
 
-  // ✅ FIX: capture now comes from the WebSocket hook — the same path enrollment
-  // (FiveFingerCapture) uses to talk to the real scanner. The old code used
-  // useFingerprint().captureFingerprint(), whose "real scanner" branch was commented
-  // out and unconditionally fell back to simulateCapture() — i.e. login always sent
-  // random fabricated minutiae that could never match anything enrolled in the DB.
   const {
     isConnected: wsConnected,
     scannerStatus,
@@ -58,8 +54,11 @@ const FingerprintLogin = () => {
   const [matchInfo, setMatchInfo] = useState(null);
   const [selectedFinger, setSelectedFinger] = useState(null);
   const [selectedFingerType, setSelectedFingerType] = useState(null);
-  // Which finger we're currently waiting on real scanner data for
   const [awaitingFinger, setAwaitingFinger] = useState(null);
+  
+  // ✅ NEW: Popup state
+  const [showModePopup, setShowModePopup] = useState(true);
+  const [popupClosed, setPopupClosed] = useState(false);
 
   // ✅ Redirect if already authenticated
   useEffect(() => {
@@ -83,7 +82,6 @@ const FingerprintLogin = () => {
   // ✅ React to real fingerprint data arriving over the WebSocket
   useEffect(() => {
     if (!fingerprintData || !awaitingFinger) return;
-    // Ignore stray/late data for a finger we're no longer waiting on
     if (fingerprintData.fingerType && fingerprintData.fingerType !== awaitingFinger) return;
 
     const templateData =
@@ -105,7 +103,6 @@ const FingerprintLogin = () => {
     );
     setAwaitingFinger(null);
     handleLogin(templateData);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fingerprintData, awaitingFinger]);
 
   // ✅ React to WebSocket-reported capture errors
@@ -129,10 +126,9 @@ const FingerprintLogin = () => {
     } else {
       setScanMessage(`❌ Too many failed attempts with ${selectedFinger?.label}. Try a different finger.`);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsError, awaitingFinger]);
 
-  // ✅ Handle manual scan — starts a REAL capture over the WebSocket
+  // ✅ Handle manual scan
   const handleManualScan = () => {
     if (!selectedFinger) {
       setError('Please select a finger first');
@@ -164,7 +160,7 @@ const FingerprintLogin = () => {
     setScanMessage('Scan cancelled.');
   };
 
-  // ✅ Handle login with the captured (real) fingerprint template
+  // ✅ Handle login
   const handleLogin = async (fingerprint) => {
     setIsLoading(true);
     setError('');
@@ -186,10 +182,8 @@ const FingerprintLogin = () => {
 
         setScanMessage(`✅ Welcome ${user.firstName}!`);
 
-        // ✅ Store user data in auth context
         authLoginWithFingerprint(response.data);
 
-        // ✅ Navigate to dashboard after brief delay
         setTimeout(() => {
           navigate('/dashboard');
         }, 1500);
@@ -204,12 +198,12 @@ const FingerprintLogin = () => {
     }
   };
 
-  // ✅ API call for fingerprint-only login
+  // ✅ API call
   const loginWithFingerprintAPI = async (fingerprintData, fingerType) => {
     try {
       const response = await axiosInstance.post('/auth/login/fingerprint', {
         fingerprintData,
-        fingerType, // ✅ Send the selected finger type for optimization
+        fingerType,
       });
       return response.data;
     } catch (error) {
@@ -259,14 +253,23 @@ const FingerprintLogin = () => {
   };
 
   const scannerStatusDisplay = getScannerStatusDisplay();
-  // ✅ FIX: isScannerReady from the hook is a function (useCallback), not a boolean —
-  // `!isScannerReady` was always false, so the button was never actually disabled by
-  // scanner-not-ready state. Call it.
   const scannerReady = isScannerReady();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <Card className="max-w-lg w-full">
+        {/* ✅ Scanner Mode Popup */}
+        {showModePopup && !popupClosed && (
+          <ScannerModePopup
+            onClose={() => {
+              setShowModePopup(false);
+              setPopupClosed(true);
+            }}
+            autoClose={true}
+            duration={6000}
+          />
+        )}
+
         {/* Logo */}
         <div className="text-center mb-6">
           <div className="w-20 h-20 bg-biomed-green rounded-2xl flex items-center justify-center mx-auto mb-3">
@@ -297,7 +300,7 @@ const FingerprintLogin = () => {
           </div>
         </div>
 
-        {/* ✅ Finger Selector */}
+        {/* Finger Selector */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
             <label className="text-sm font-medium text-gray-700">
@@ -317,7 +320,7 @@ const FingerprintLogin = () => {
           />
         </div>
 
-        {/* Selected Finger Preview */}
+                {/* Selected Finger Preview */}
         {selectedFinger && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
             <div className="flex items-center gap-3">
@@ -344,6 +347,7 @@ const FingerprintLogin = () => {
             attempts={attempts}
             maxAttempts={3}
             selectedFinger={selectedFinger}
+            scannerMode={scannerStatus.isSimulated ? 'simulated' : 'real'}
           />
         </div>
 

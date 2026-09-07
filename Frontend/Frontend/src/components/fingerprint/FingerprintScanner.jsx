@@ -9,7 +9,8 @@ export const FingerprintScanner = ({
   message,
   attempts,
   maxAttempts,
-  selectedFinger 
+  selectedFinger,
+  scannerMode = 'simulated' // ✅ NEW: 'real' or 'simulated'
 }) => {
   // Get status styles
   const getStatusStyles = () => {
@@ -47,6 +48,26 @@ export const FingerprintScanner = ({
 
   const styles = getStatusStyles();
 
+  // ✅ Get scanner mode indicator
+  const getModeIndicator = () => {
+    if (scannerMode === 'real') {
+      return {
+        icon: '🟢',
+        label: 'REAL SCANNER',
+        color: 'text-green-600',
+        bg: 'bg-green-100 border-green-400'
+      };
+    }
+    return {
+      icon: '🟡',
+      label: 'SIMULATED MODE',
+      color: 'text-yellow-600',
+      bg: 'bg-yellow-100 border-yellow-400'
+    };
+  };
+
+  const mode = getModeIndicator();
+
   // Get status message based on state
   const getStatusMessage = () => {
     if (status === 'scanning') return message || 'Scanning fingerprint...';
@@ -58,6 +79,23 @@ export const FingerprintScanner = ({
 
   return (
     <div className="flex flex-col items-center">
+      {/* ✅ Mode Indicator Banner */}
+      <div className={`w-full mb-4 p-2 rounded-lg border-2 text-center ${mode.bg}`}>
+        <span className={`text-sm font-bold ${mode.color}`}>
+          {mode.icon} {mode.label}
+          {scannerMode === 'simulated' && (
+            <span className="text-xs font-normal ml-2 text-gray-600">
+              (No physical scanner detected)
+            </span>
+          )}
+          {scannerMode === 'real' && (
+            <span className="text-xs font-normal ml-2 text-green-600">
+              (Physical device connected)
+            </span>
+          )}
+        </span>
+      </div>
+
       {/* Scanner Visual */}
       <div 
         className={`
@@ -68,6 +106,8 @@ export const FingerprintScanner = ({
           transition-all duration-300
           ${styles.pulse ? 'animate-pulse' : ''}
           ${selectedFinger && status === 'idle' ? 'cursor-pointer hover:scale-105 transition-transform' : 'cursor-default'}
+          ${isCapturing && scannerMode === 'simulated' ? 'border-yellow-400' : ''}
+          ${isCapturing && scannerMode === 'real' ? 'border-green-400' : ''}
         `}
         onClick={() => {
           if (selectedFinger && status === 'idle' && !isCapturing) {

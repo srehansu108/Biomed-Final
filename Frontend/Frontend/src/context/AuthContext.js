@@ -4,6 +4,7 @@ import React, { createContext, useState, useEffect } from 'react';
 import axiosInstance from '../api/axiosConfig';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
+// ✅ Export the context itself (named export)
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
@@ -78,18 +79,25 @@ export const AuthProvider = ({ children }) => {
       
       // Add all fields to formData
       Object.keys(userData).forEach(key => {
+        const value = userData[key];
+        
+        // ✅ Skip empty strings, null, undefined
+        if (value === '' || value === null || value === undefined) {
+          return;
+        }
+        
         if (key === 'fingerprints') {
-          formData.append(key, JSON.stringify(userData[key]));
+          formData.append(key, JSON.stringify(value));
         } else if (key === 'languages' || key === 'idProofType') {
-          formData.append(key, JSON.stringify(userData[key]));
-        } else if (key === 'profilePhoto' && userData[key] instanceof File) {
-          formData.append('profilePhoto', userData[key]);
-        } else if (key === 'documents' && Array.isArray(userData[key])) {
-          userData[key].forEach(file => {
+          formData.append(key, JSON.stringify(value));
+        } else if (key === 'profilePhoto' && value instanceof File) {
+          formData.append('profilePhoto', value);
+        } else if (key === 'documents' && Array.isArray(value)) {
+          value.forEach(file => {
             formData.append('documents', file);
           });
-        } else if (userData[key] !== undefined && userData[key] !== null) {
-          formData.append(key, String(userData[key]));
+        } else {
+          formData.append(key, String(value));
         }
       });
 
@@ -171,7 +179,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // ✅ NEW: Fingerprint-only login
+  // ✅ Fingerprint-only login
   const loginWithFingerprint = async (responseData) => {
     try {
       const { user: userData_, tokens, match } = responseData;
@@ -215,3 +223,6 @@ export const AuthProvider = ({ children }) => {
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
+
+// ✅ Default export for backward compatibility
+export default AuthContext;

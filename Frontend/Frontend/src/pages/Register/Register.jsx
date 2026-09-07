@@ -1,4 +1,4 @@
-// client/src/pages/Register/Register.jsx - FIXED
+// client/src/pages/Register/Register.jsx - FULLY FIXED
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -15,53 +15,38 @@ const Register = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // ✅ Initialize all fields properly
   const [formData, setFormData] = useState({
-    // Personal Information
     firstName: '',
     middleName: '',
     lastName: '',
-    dateOfBirth: null,  // Store as Date object
+    dateOfBirth: null,
     gender: '',
     maritalStatus: '',
-    
-    // Location
     stateOfOrigin: '',
     localGovernment: '',
     city: '',
     residentialAddress: '',
-    
-    // Contact
     phone: '',
     alternatePhone: '',
     emergencyContactName: '',
     emergencyContactPhone: '',
-    
-    // Languages
     languages: {
       english: { read: false, write: false, speak: false, understand: false },
       yoruba: { read: false, write: false, speak: false, understand: false },
-      'Igbo Hausa': { read: false, write: false, speak: false, understand: false },
+      igbo: { read: false, write: false, speak: false, understand: false },
+      hausa: { read: false, write: false, speak: false, understand: false },
       other: { name: '', read: false, write: false, speak: false, understand: false }
     },
     languageNotes: '',
-    
-    // Dietary
     dietaryHabit: '',
-    
-    // Documents
     idProofType: [],
     documents: [],
-    
-    // Education & Occupation
     education: [],
     occupation: '',
     remarks: '',
-    
-    // Biometrics
-    fingerprints: {},   // Will be filled in Step2
-    profilePhoto: null, // File object
-    profileImage: null  // Base64 from webcam
+    fingerprints: {},
+    profilePhoto: null,
+    profileImage: null
   });
 
   const handleNextStep = () => {
@@ -73,13 +58,16 @@ const Register = () => {
     setError('');
 
     try {
-      // ✅ Combine all form data
+      // ✅ Prepare registration data
       const registrationData = {
         ...formData,
         fingerprints: data.fingerprints || {},
-        profilePhoto: data.profileImage ? null : formData.profilePhoto, // Use file if available
-        profileImage: data.profileImage || null, // Use webcam image
-        // Ensure required fields are present
+        profilePhoto: data.profileImage ? null : formData.profilePhoto,
+        profileImage: data.profileImage || null,
+        // ✅ CRITICAL: Send null instead of empty string for optional fields
+        alternatePhone: formData.alternatePhone?.trim() || null,
+        languageNotes: formData.languageNotes?.trim() || null,
+        remarks: formData.remarks?.trim() || null,
       };
 
       // ✅ Log data before sending
@@ -87,10 +75,9 @@ const Register = () => {
         firstName: registrationData.firstName,
         lastName: registrationData.lastName,
         phone: registrationData.phone,
-        hasProfilePhoto: !!registrationData.profilePhoto,
-        hasProfileImage: !!registrationData.profileImage,
+        alternatePhone: registrationData.alternatePhone,
         fingerprintsCount: Object.keys(registrationData.fingerprints).length,
-        documentsCount: registrationData.documents?.length || 0
+        languages: Object.keys(registrationData.languages)
       });
 
       await register(registrationData);
