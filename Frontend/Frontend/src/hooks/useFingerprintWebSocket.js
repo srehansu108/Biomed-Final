@@ -1,5 +1,3 @@
-// client/src/hooks/useFingerprintWebSocket.js - SINGLETON VERSION
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // ✅ Singleton WebSocket Manager
@@ -24,6 +22,7 @@ class WebSocketManager {
       deviceInfo: null,
       lastUpdated: null,
     };
+    this._shouldStayConnected = true; // ✅ NEW: Keep connection alive
     
     WebSocketManager.instance = this;
   }
@@ -65,6 +64,15 @@ class WebSocketManager {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         
+        // ✅ Send authentication if token exists
+        const token = localStorage.getItem('accessToken');
+        if (token && this.ws?.readyState === WebSocket.OPEN) {
+          this.sendMessage({
+            type: 'authenticate',
+            payload: { token }
+          });
+        }
+        
         this.notify({
           type: 'connected',
           payload: { 
@@ -103,8 +111,8 @@ class WebSocketManager {
           }
         });
 
-        // ✅ Auto-reconnect with backoff
-        if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
+        // ✅ Auto-reconnect if we should stay connected
+        if (this._shouldStayConnected && event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
           console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
@@ -120,14 +128,23 @@ class WebSocketManager {
     }
   }
 
-  // ✅ Disconnect and cleanup
+  // ✅ Disconnect only when explicitly called
   disconnect() {
+    this._shouldStayConnected = false;
     if (this.ws) {
       this.ws.close(1000, 'Manual disconnect');
       this.ws = null;
       this.isConnected = false;
       this.isConnecting = false;
       console.log('🔌 WebSocket manually disconnected');
+    }
+  }
+
+  // ✅ Keep connection alive (call when app starts)
+  keepAlive() {
+    this._shouldStayConnected = true;
+    if (!this.isConnected && !this.isConnecting) {
+      this.connect();
     }
   }
 
@@ -164,14 +181,17 @@ export const useFingerprintWebSocket = () => {
   const [fingerprintData, setFingerprintData] = useState(null);
   const [liveData, setLiveData] = useState(null);
   const [scannerStatus, setScannerStatus] = useState(wsManager.scannerStatus);
-  const [connectionCount, setConnectionCount] = useState(0);
 
   const token = localStorage.getItem('accessToken');
 
+  // ✅ Ensure WebSocket stays alive
+  useEffect(() => {
+    wsManager.keepAlive();
+  }, []);
+
   // ✅ Subscribe to WebSocket messages
   useEffect(() => {
-    console.log(`📡 Subscribing to WebSocket (count: ${connectionCount + 1})`);
-    setConnectionCount(prev => prev + 1);
+    console.log(`📡 Subscribing to WebSocket`);
 
     const handleMessage = (data) => {
       console.log('📨 WebSocket message received:', data.type);
@@ -183,13 +203,6 @@ export const useFingerprintWebSocket = () => {
           if (data.payload?.scanner) {
             setScannerStatus(data.payload.scanner);
             wsManager.scannerStatus = data.payload.scanner;
-          }
-          // ✅ Send authentication if token exists
-          if (token && wsManager.ws?.readyState === WebSocket.OPEN) {
-            wsManager.sendMessage({
-              type: 'authenticate',
-              payload: { token }
-            });
           }
           break;
           
@@ -242,16 +255,11 @@ export const useFingerprintWebSocket = () => {
     // ✅ Subscribe to singleton manager
     const unsubscribe = wsManager.subscribe(handleMessage);
 
-    // ✅ Ensure connection exists
-    if (!wsManager.isConnected && !wsManager.isConnecting) {
-      wsManager.connect();
-    }
-
-    // ✅ Cleanup on unmount
+    // ✅ Cleanup: only unsubscribe, don't disconnect
     return () => {
       console.log('🔌 Unsubscribing from WebSocket');
       unsubscribe();
-      setConnectionCount(prev => prev - 1);
+      // ✅ DO NOT disconnect the WebSocket here!
     };
   }, [token]);
 
@@ -283,9 +291,7 @@ export const useFingerprintWebSocket = () => {
   const clearError = useCallback(() => setError(null), []);
 
   const connect = useCallback(() => {
-    if (!wsManager.isConnected && !wsManager.isConnecting) {
-      wsManager.connect();
-    }
+    wsManager.keepAlive();
   }, []);
 
   const disconnect = useCallback(() => {
@@ -312,7 +318,6 @@ export const useFingerprintWebSocket = () => {
     clearError,
     connect,
     disconnect,
-    connectionCount, // ✅ For debugging
   };
 };
 

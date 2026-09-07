@@ -111,7 +111,7 @@ class BiometricService {
     };
   }
 
-  async captureFingerprint(fingerType = 'right_thumb', onProgress, timeout = SCANNER.TIMEOUT || 30000) {
+  async captureFingerprint(fingerType = 'right_thumb', onProgress, timeout = SCANNER.TIMEOUT || 60000) {
     try {
       if (!this.isReady) {
         await this.initialize();
