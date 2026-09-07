@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 // ✅ Direct URL for now
-const API_URL = 'http://localhost:8000/api/v1';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const axiosInstance = axios.create({
   baseURL: API_URL,
