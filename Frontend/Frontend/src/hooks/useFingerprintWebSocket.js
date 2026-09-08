@@ -1,4 +1,46 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+// client/src/hooks/useFingerprintWebSocket.js
+
+import { useState, useEffect, useCallback } from 'react';
+
+// ✅ Smart WebSocket URL detection
+const getWebSocketUrl = () => {
+  // 1. Check environment variable first
+  const envUrl = import.meta.env.VITE_WS_URL;
+  
+  // 2. Check if we're in production (HTTPS)
+  const isProduction = window.location.protocol === 'https:';
+  
+  console.log('🔍 Environment:', {
+    isProduction,
+    protocol: window.location.protocol,
+    hostname: window.location.hostname,
+    envUrl: envUrl
+  });
+  
+  // 3. If env var is set, clean it up
+  if (envUrl) {
+    // Remove any http:// or https:// prefix (keep only domain/path)
+    let cleanUrl = envUrl.replace(/^https?:\/\//, '');
+    
+    // If it already has ws:// or wss://, use as-is
+    if (envUrl.startsWith('ws://') || envUrl.startsWith('wss://')) {
+      console.log('✅ Using WebSocket URL from env:', envUrl);
+      return envUrl;
+    }
+    
+    // Otherwise, add the correct protocol
+    const protocol = isProduction ? 'wss://' : 'ws://';
+    const finalUrl = `${protocol}${cleanUrl}`;
+    console.log('✅ Constructed WebSocket URL:', finalUrl);
+    return finalUrl;
+  }
+  
+  // 4. No env var - use fallback
+  const protocol = isProduction ? 'wss://' : 'ws://';
+  const fallbackUrl = `${protocol}${window.location.hostname}/ws/fingerprint`;
+  console.log('⚠️ Using fallback WebSocket URL:', fallbackUrl);
+  return fallbackUrl;
+};
 
 // ✅ Singleton WebSocket Manager
 class WebSocketManager {
@@ -22,18 +64,19 @@ class WebSocketManager {
       deviceInfo: null,
       lastUpdated: null,
     };
-    this._shouldStayConnected = true; // ✅ NEW: Keep connection alive
+    this._shouldStayConnected = true;
+    this._wsUrl = getWebSocketUrl();
+    
+    console.log('🔗 WebSocket Manager initialized with URL:', this._wsUrl);
     
     WebSocketManager.instance = this;
   }
 
-  // ✅ Subscribe to WebSocket events
   subscribe(callback) {
     this.subscribers.add(callback);
     return () => this.subscribers.delete(callback);
   }
 
-  // ✅ Notify all subscribers
   notify(data) {
     this.subscribers.forEach(callback => {
       try {
@@ -44,7 +87,6 @@ class WebSocketManager {
     });
   }
 
-  // ✅ Connect once
   connect() {
     if (this.isConnecting || this.isConnected) {
       console.log('⚠️ WebSocket already connecting or connected');
@@ -52,19 +94,18 @@ class WebSocketManager {
     }
 
     this.isConnecting = true;
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/fingerprint';
-    console.log('🔗 Connecting WebSocket (singleton):', wsUrl);
+    const wsUrl = this._wsUrl;
+    console.log('🔗 Connecting WebSocket:', wsUrl);
 
     try {
       this.ws = new WebSocket(wsUrl);
       
       this.ws.onopen = () => {
-        console.log('✅ WebSocket connected (singleton)');
+        console.log('✅ WebSocket connected');
         this.isConnected = true;
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         
-        // ✅ Send authentication if token exists
         const token = localStorage.getItem('accessToken');
         if (token && this.ws?.readyState === WebSocket.OPEN) {
           this.sendMessage({
@@ -111,7 +152,6 @@ class WebSocketManager {
           }
         });
 
-        // ✅ Auto-reconnect if we should stay connected
         if (this._shouldStayConnected && event.code !== 1000 && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
@@ -123,12 +163,11 @@ class WebSocketManager {
         }
       };
     } catch (error) {
-      console.error('WebSocket connection error:', error);
+      console.error('❌ WebSocket connection error:', error);
       this.isConnecting = false;
     }
   }
 
-  // ✅ Disconnect only when explicitly called
   disconnect() {
     this._shouldStayConnected = false;
     if (this.ws) {
@@ -140,7 +179,6 @@ class WebSocketManager {
     }
   }
 
-  // ✅ Keep connection alive (call when app starts)
   keepAlive() {
     this._shouldStayConnected = true;
     if (!this.isConnected && !this.isConnecting) {
@@ -148,7 +186,6 @@ class WebSocketManager {
     }
   }
 
-  // ✅ Send message
   sendMessage(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
@@ -158,7 +195,6 @@ class WebSocketManager {
     return false;
   }
 
-  // ✅ Get connection status
   getStatus() {
     return {
       isConnected: this.isConnected,
@@ -171,7 +207,7 @@ class WebSocketManager {
 // ✅ Singleton instance
 const wsManager = new WebSocketManager();
 
-// ✅ React Hook using the singleton
+// ✅ React Hook
 export const useFingerprintWebSocket = () => {
   const [isConnected, setIsConnected] = useState(wsManager.isConnected);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -184,12 +220,10 @@ export const useFingerprintWebSocket = () => {
 
   const token = localStorage.getItem('accessToken');
 
-  // ✅ Ensure WebSocket stays alive
   useEffect(() => {
     wsManager.keepAlive();
   }, []);
 
-  // ✅ Subscribe to WebSocket messages
   useEffect(() => {
     console.log(`📡 Subscribing to WebSocket`);
 
@@ -252,20 +286,14 @@ export const useFingerprintWebSocket = () => {
       }
     };
 
-    // ✅ Subscribe to singleton manager
     const unsubscribe = wsManager.subscribe(handleMessage);
 
-    // ✅ Cleanup: only unsubscribe, don't disconnect
     return () => {
       console.log('🔌 Unsubscribing from WebSocket');
       unsubscribe();
-      // ✅ DO NOT disconnect the WebSocket here!
     };
   }, [token]);
 
-  // ============================================
-  // ✅ API Functions
-  // ============================================
   const startCapture = useCallback((fingerType = 'right_thumb') => {
     if (!wsManager.isConnected) {
       setError('Scanner not connected');
